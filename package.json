@@ -8,7 +8,9 @@
 	"bin": {
 		"mcp-graphql": "./dist/index.js"
 	},
-	"files": ["dist"],
+	"files": [
+		"dist"
+	],
 	"devDependencies": {
 		"@graphql-tools/schema": "^10.0.23",
 		"@types/bun": "^1.2.14",
@@ -26,7 +28,8 @@
 	"scripts": {
 		"dev": "bun --watch src/index.ts",
 		"build": "bun build src/index.ts --outdir dist --target node && bun -e \"require('fs').chmodSync('dist/index.js', '755')\"",
-		"start": "bun run dist/index.js"
+		"start": "bun run dist/index.js",
+		"format": "biome format --write ."
 	},
 	"packageManager": "bun@1.2.4"
 }
