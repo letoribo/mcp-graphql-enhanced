@@ -28,6 +28,8 @@ jobs:
         with:
           bun-version: latest
       - run: bun install
+      - run: bun run format
+      - run: bun run check
       - run: bun run build
       - name: Get tag annotation
         id: get-tag-annotation

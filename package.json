@@ -29,7 +29,8 @@
 		"dev": "bun --watch src/index.ts",
 		"build": "bun build src/index.ts --outdir dist --target node && bun -e \"require('fs').chmodSync('dist/index.js', '755')\"",
 		"start": "bun run dist/index.js",
-		"format": "biome format --write ."
+		"format": "biome format --write .",
+		"check": "biome format ."
 	},
-	"packageManager": "bun@1.2.4"
+	"packageManager": "bun@1.2.19"
 }
