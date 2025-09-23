@@ -28,7 +28,7 @@ export async function introspectEndpoint(
 
 	const responseJson = await response.json();
 	// Transform to a schema object
-	const schema = buildClientSchema(responseJson.data);
+	const schema = buildClientSchema((responseJson as any).data);
 
 	// Print the schema SDL
 	return printSchema(schema);

@@ -1,27 +1,22 @@
 {
 	"compilerOptions": {
-		// Enable latest features
-		"lib": ["ESNext", "DOM"],
-		"target": "ESNext",
-		"module": "ESNext",
-		"moduleDetection": "force",
-		"jsx": "react-jsx",
-		"allowJs": true,
+		"target": "ES2022",
+		"module": "CommonJS",
+    	"moduleResolution": "Node",
+		"lib": ["ES2022"],
+		"types": ["node"],
 
-		// Bundler mode
-		"moduleResolution": "bundler",
-		"allowImportingTsExtensions": true,
-		"verbatimModuleSyntax": true,
-		"noEmit": true,
+		"outDir": "./dist",
+		"rootDir": "./src",
 
-		// Best practices
 		"strict": true,
+		"esModuleInterop": true,
 		"skipLibCheck": true,
-		"noFallthroughCasesInSwitch": true,
+		"forceConsistentCasingInFileNames": true,
 
-		// Some stricter flags (disabled by default)
-		"noUnusedLocals": false,
-		"noUnusedParameters": false,
-		"noPropertyAccessFromIndexSignature": false
-	}
+		"noEmit": false,
+		"verbatimModuleSyntax": false
+	},
+	"include": ["src/**/*"],
+	"exclude": ["node_modules"]
 }

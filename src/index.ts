@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { parse } from "graphql/language";
-import { z } from "zod";
-import { checkDeprecatedArguments } from "./helpers/deprecation.js";
-import {
+const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
+const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
+const { parse } = require("graphql/language");
+const z = require("zod").default; // 👈 .default is required in CommonJS
+const { checkDeprecatedArguments } = require("./helpers/deprecation.js");
+const {
 	introspectEndpoint,
 	introspectLocalSchema,
 	introspectSchemaFromUrl,
-} from "./helpers/introspection.js";
-import { getVersion } from "./helpers/package.js" with { type: "macro" };
+} = require("./helpers/introspection.js");
+
+// Simulate macro import — since "with { type: 'macro' }" is not CommonJS compatible
+const getVersion = () => {
+	// Replace with your actual version or read from package.json
+	const pkg = require("../package.json");
+	return pkg.version;
+};
 
 // Check for deprecated command line arguments
 checkDeprecatedArguments();
@@ -20,12 +26,12 @@ const EnvSchema = z.object({
 	ENDPOINT: z.string().url().default("http://localhost:4000/graphql"),
 	ALLOW_MUTATIONS: z
 		.enum(["true", "false"])
-		.transform((value) => value === "true")
+		.transform((value: string) => value === "true")  // 👈 Typed
 		.default("false"),
 	HEADERS: z
 		.string()
 		.default("{}")
-		.transform((val) => {
+		.transform((val: string) => {  // 👈 Typed
 			try {
 				return JSON.parse(val);
 			} catch (e) {
@@ -43,9 +49,9 @@ const server = new McpServer({
 	description: `GraphQL MCP server for ${env.ENDPOINT}`,
 });
 
-server.resource("graphql-schema", new URL(env.ENDPOINT).href, async (uri) => {
+server.resource("graphql-schema", new URL(env.ENDPOINT).href, async (uri: URL) => { 
 	try {
-		let schema: string;
+		let schema;
 		if (env.SCHEMA) {
 			if (
 				env.SCHEMA.startsWith("http://") ||
@@ -76,8 +82,6 @@ server.tool(
 	"introspect-schema",
 	"Introspect the GraphQL schema, use this tool before doing a query to get the schema information if you do not have it available as a resource already.",
 	{
-		// This is a workaround to help clients that can't handle an empty object as an argument
-		// They will often send undefined instead of an empty object which is not allowed by the schema
 		__ignore__: z
 			.boolean()
 			.default(false)
@@ -85,7 +89,7 @@ server.tool(
 	},
 	async () => {
 		try {
-			let schema: string;
+			let schema;
 			if (env.SCHEMA) {
 				schema = await introspectLocalSchema(env.SCHEMA);
 			} else {
@@ -116,18 +120,21 @@ server.tool(
 
 server.tool(
 	"query-graphql",
-	"Query a GraphQL endpoint with the given query and variables",
+	"Query a GraphQL endpoint with the given query and variables. Optionally pass headers (e.g., for Authorization).",
 	{
 		query: z.string(),
 		variables: z.string().optional(),
+		headers: z
+			.string()
+			.optional()
+			.describe("Optional JSON string of headers to include, e.g., {\"Authorization\": \"Bearer ...\"}"),
 	},
-	async ({ query, variables }) => {
+	async ({ query, variables, headers }: { query: string; variables?: string; headers?: string }) => {
 		try {
 			const parsedQuery = parse(query);
 
-			// Check if the query is a mutation
 			const isMutation = parsedQuery.definitions.some(
-				(def) =>
+				(def: any) =>
 					def.kind === "OperationDefinition" && def.operation === "mutation",
 			);
 
@@ -155,12 +162,19 @@ server.tool(
 		}
 
 		try {
+			const toolHeaders = headers
+				? JSON.parse(headers)
+				: {};
+
+			const allHeaders = {
+				"Content-Type": "application/json",
+				...env.HEADERS,
+				...toolHeaders,
+			};
+
 			const response = await fetch(env.ENDPOINT, {
 				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					...env.HEADERS,
-				},
+				headers: allHeaders,
 				body: JSON.stringify({
 					query,
 					variables,
@@ -169,7 +183,6 @@ server.tool(
 
 			if (!response.ok) {
 				const responseText = await response.text();
-
 				return {
 					isError: true,
 					content: [
@@ -181,20 +194,18 @@ server.tool(
 				};
 			}
 
-			const data = await response.json();
+			const rawData = await response.json();
+
+			// Type assertion for quick dev (replace with zod validation later)
+			const data = rawData as any;
 
 			if (data.errors && data.errors.length > 0) {
-				// Contains GraphQL errors
 				return {
 					isError: true,
 					content: [
 						{
 							type: "text",
-							text: `The GraphQL response has errors, please fix the query: ${JSON.stringify(
-								data,
-								null,
-								2,
-							)}`,
+							text: `GraphQL errors: ${JSON.stringify(data.errors, null, 2)}`,
 						},
 					],
 				};
@@ -209,7 +220,15 @@ server.tool(
 				],
 			};
 		} catch (error) {
-			throw new Error(`Failed to execute GraphQL query: ${error}`);
+			return {
+				isError: true,
+				content: [
+					{
+						type: "text",
+						text: `Failed to execute GraphQL query: ${error}`,
+					},
+				],
+			};
 		}
 	},
 );
