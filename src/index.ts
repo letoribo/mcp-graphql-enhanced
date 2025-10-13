@@ -3,7 +3,7 @@
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { parse } = require("graphql/language");
-const z = require("zod").default; // 👈 .default is required in CommonJS
+const z = require("zod").default;
 const { checkDeprecatedArguments } = require("./helpers/deprecation.js");
 const {
 	introspectEndpoint,
@@ -26,12 +26,12 @@ const EnvSchema = z.object({
 	ENDPOINT: z.string().url().default("http://localhost:4000/graphql"),
 	ALLOW_MUTATIONS: z
 		.enum(["true", "false"])
-		.transform((value: string) => value === "true")  // 👈 Typed
+		.transform((value: string) => value === "true")
 		.default("false"),
 	HEADERS: z
 		.string()
 		.default("{}")
-		.transform((val: string) => {  // 👈 Typed
+		.transform((val: string) => {
 			try {
 				return JSON.parse(val);
 			} catch (e) {
@@ -172,12 +172,22 @@ server.tool(
 				...toolHeaders,
 			};
 
+			// Parse variables if it's a string
+			let parsedVariables = null;
+			if (variables) {
+				if (typeof variables === 'string') {
+					parsedVariables = JSON.parse(variables);
+				} else {
+					parsedVariables = variables;
+				}
+			}
+
 			const response = await fetch(env.ENDPOINT, {
 				method: "POST",
 				headers: allHeaders,
 				body: JSON.stringify({
 					query,
-					variables,
+					variables: parsedVariables,
 				}),
 			});
 
