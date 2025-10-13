@@ -2,8 +2,8 @@
 	"compilerOptions": {
 		"target": "ES2022",
 		"module": "CommonJS",
-    	"moduleResolution": "Node",
-		"lib": ["ES2022"],
+		"moduleResolution": "Node",
+		"lib": ["ES2022", "DOM"],
 		"types": ["node"],
 
 		"outDir": "./dist",
@@ -15,7 +15,9 @@
 		"forceConsistentCasingInFileNames": true,
 
 		"noEmit": false,
-		"verbatimModuleSyntax": false
+		"verbatimModuleSyntax": false,
+		"declaration": true,
+		"declarationMap": true
 	},
 	"include": ["src/**/*"],
 	"exclude": ["node_modules"]

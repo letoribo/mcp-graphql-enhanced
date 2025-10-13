@@ -24,26 +24,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          bun-version: latest
-      - run: bun install
-      - run: bun run format
-      - run: bun run check
-      - run: bun run build
+          node-version: 22
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run build
+
       - name: Get tag annotation
         id: get-tag-annotation
         run: |
           TAG_NAME=${GITHUB_REF#refs/tags/}
           echo "Processing tag: $TAG_NAME"
-          # Check if tag exists and is annotated
           if TAG_MESSAGE=$(git tag -l --format='%(contents)' $TAG_NAME 2>/dev/null); then
             echo "Found annotated tag message"
           else
             echo "No tag annotation found, using empty message"
             TAG_MESSAGE=""
           fi
-          # Use multiline output syntax for GitHub Actions
           echo "TAG_MESSAGE<<EOF" >> $GITHUB_OUTPUT
           echo "$TAG_MESSAGE" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -56,28 +57,22 @@ jobs:
           generate_release_notes: true
           body: ${{ steps.get-tag-annotation.outputs.TAG_MESSAGE }}
           append_body: true
-          # Use PAT as it sends a release event, built in token doesn't
           token: ${{ secrets.RELEASE_TOKEN }}
 
   publish:
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' && inputs.version != ''
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.version != '')
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      # Falling back to node since I want provenance for the npm package
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
-      # Might be a useless optimization but I felt like not reusing the build job
-      - name: Download index.js from release
-        run: |
-          gh release download ${{ github.event.release.tag_name || inputs.version }} --dir dist --pattern "index.js"
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - run: npm ci
+      - run: npm run build
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

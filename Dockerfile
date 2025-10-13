@@ -1,30 +1,23 @@
-# Bun based Dockerfile
-# Does not build the server, but runs it directly from source using bun
+# Use official Node.js LTS image
+FROM node:22-alpine
 
-FROM oven/bun:1 AS base
-WORKDIR /usr/src/app
+# Set working directory
+WORKDIR /app
 
-# Cached dependency install layer
-FROM base AS install
-RUN mkdir -p /temp/dev
-COPY package.json bun.lock /temp/dev/
-RUN cd /temp/dev && bun install --frozen-lockfile
+# Copy package files
+COPY package*.json ./
 
-# exclude devDependencies
-RUN mkdir -p /temp/prod
-COPY package.json bun.lock /temp/prod/
-RUN cd /temp/prod && bun install --frozen-lockfile --production
+# Install production dependencies only
+RUN npm ci --only=production && npm cache clean --force
 
-FROM base AS prerelease
-COPY --from=install /temp/dev/node_modules node_modules
-COPY . .
+# Copy built code from dist/
+COPY dist/ ./dist/
 
-# copy production dependencies and source code into final image
-FROM base AS release
-COPY --from=install /temp/prod/node_modules node_modules
-COPY --from=prerelease /usr/src/app/src/ ./src/
-COPY --from=prerelease /usr/src/app/package.json .
+# Make the entrypoint executable
+RUN chmod +x dist/index.js
 
-# run the app
-USER bun
-ENTRYPOINT [ "bun", "run", "src/index.ts" ]
+# Run as non-root user (security best practice)
+USER node
+
+# MCP tools use stdio — no ports needed
+ENTRYPOINT ["node", "dist/index.js"]

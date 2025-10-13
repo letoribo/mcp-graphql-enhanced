@@ -1,14 +1,28 @@
-# mcp-graphql
+# mcp-graphql-enhanced
 
-[![smithery badge](https://smithery.ai/badge/mcp-graphql)](https://smithery.ai/server/mcp-graphql)
+[![Smithery](https://smithery.ai/badge/mcp-graphql-enhanced)](https://smithery.ai/server/mcp-graphql-enhanced)
+[![Glama](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)
 
-A Model Context Protocol server that enables LLMs to interact with GraphQL APIs. This implementation provides schema introspection and query execution capabilities, allowing models to discover and use GraphQL APIs dynamically.
+An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
 
-<a href="https://glama.ai/mcp/servers/4zwa4l8utf"><img width="380" height="200" src="https://glama.ai/mcp/servers/4zwa4l8utf/badge" alt="mcp-graphql MCP server" /></a>
+> Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
 
-## Usage
+## ✨ Key Enhancements
 
-Run `mcp-graphql` with the correct endpoint, it will automatically try to introspect your queries.
+- ✅ **Dynamic headers** — pass `Authorization`, `X-API-Key`, etc., via tool arguments (no config restarts)
+- ✅ **Robust variables parsing** — fixes `“Query variables must be a null or an object”` error
+- ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Cursor**, **Glama**, and **Smithery**
+- ✅ **Secure by default** — mutations disabled unless explicitly enabled
+
+## 🔍 Debug & Inspect
+
+Use the official MCP Inspector to test your server live:
+
+```bash
+npx @modelcontextprotocol/inspector \
+  -e ENDPOINT=https://api.example.com/graphql \
+  npx mcp-graphql-enhanced --debug
+```
 
 ### Environment Variables (Breaking change in 1.0.0)
 
@@ -19,26 +33,29 @@ Run `mcp-graphql` with the correct endpoint, it will automatically try to intros
 | `ENDPOINT` | GraphQL endpoint URL | `http://localhost:4000/graphql` |
 | `HEADERS` | JSON string containing headers for requests | `{}` |
 | `ALLOW_MUTATIONS` | Enable mutation operations (disabled by default) | `false` |
-| `NAME` | Name of the MCP server | `mcp-graphql` |
+| `NAME` | Name of the MCP server | `mcp-graphql-enhanced` |
 | `SCHEMA` | Path to a local GraphQL schema file or URL (optional) | - |
 
 ### Examples
 
 ```bash
-# Basic usage with a local GraphQL server
-ENDPOINT=http://localhost:3000/graphql npx mcp-graphql
+# Basic usage
+ENDPOINT=http://localhost:3000/graphql npx mcp-graphql-enhanced
 
-# Using with custom headers
-ENDPOINT=https://api.example.com/graphql HEADERS='{"Authorization":"Bearer token123"}' npx mcp-graphql
+# With auth header
+ENDPOINT=https://api.example.com/graphql \
+HEADERS='{"Authorization":"Bearer xyz"}' \
+npx mcp-graphql-enhanced
 
-# Enable mutation operations
-ENDPOINT=http://localhost:3000/graphql ALLOW_MUTATIONS=true npx mcp-graphql
+# Enable mutations
+ENDPOINT=http://localhost:3000/graphql \
+ALLOW_MUTATIONS=true \
+npx mcp-graphql-enhanced
 
-# Using a local schema file instead of introspection
-ENDPOINT=http://localhost:3000/graphql SCHEMA=./schema.graphql npx mcp-graphql
-
-# Using a schema file hosted at a URL
-ENDPOINT=http://localhost:3000/graphql SCHEMA=https://example.com/schema.graphql npx mcp-graphql
+# Use local schema file
+ENDPOINT=http://localhost:3000/graphql \
+SCHEMA=./schema.graphql \
+npx mcp-graphql-enhanced
 ```
 
 ## Resources
@@ -58,10 +75,10 @@ This uses either the local schema file, a schema file hosted at a URL, or an int
 
 ### Installing via Smithery
 
-To install GraphQL MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-graphql):
+To install GraphQL MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-graphql-enhanced):
 
 ```bash
-npx -y @smithery/cli install mcp-graphql --client claude
+npx -y @smithery/cli install mcp-graphql-enhanced --client claude
 ```
 
 ### Installing Manually
@@ -72,9 +89,9 @@ It can be manually installed to Claude:
     "mcpServers": {
         "mcp-graphql": {
             "command": "npx",
-            "args": ["mcp-graphql"],
+            "args": ["mcp-graphql-enhanced"],
             "env": {
-                "ENDPOINT": "http://localhost:3000/graphql"
+                "ENDPOINT": "https://your-api.com/graphql"
             }
         }
     }
@@ -83,8 +100,7 @@ It can be manually installed to Claude:
 
 ## Security Considerations
 
-Mutations are disabled by default as a security measure to prevent an LLM from modifying your database or service data. Consider carefully before enabling mutations in production environments.
-
+Mutations are disabled by default to prevent unintended data changes. Always validate HEADERS and SCHEMA inputs in production. Use HTTPS endpoints and short-lived tokens where possible.
 ## Customize for your own server
 
 This is a very generic implementation where it allows for complete introspection and for your users to do whatever (including mutations). If you need a more specific implementation I'd suggest to just create your own MCP and lock down tool calling for clients to only input specific query fields and/or variables. You can use this as a reference.
