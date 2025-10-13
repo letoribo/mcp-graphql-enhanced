@@ -1,6 +1,6 @@
 {
 	"name": "mcp-graphql-enhanced",
-	"version": "2.0.10",
+	"version": "2.0.11",
 	"description": "MCP server for GraphQL endpoints with dynamic headers and variables parsing",
 	"keywords": [
 		"mcp",
