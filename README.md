@@ -1,8 +1,7 @@
 # mcp-graphql-enhanced
 
-[![Smithery](https://smithery.ai/badge/mcp-graphql-enhanced)](https://smithery.ai/server/mcp-graphql-enhanced)
-[![Glama](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)
-
+[![Smithery](https://smithery.ai/badge/@letoribo/mcp-graphql-enhanced)](https://smithery.ai/server/@letoribo/mcp-graphql-enhanced)
+[![Glama](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced/badge)](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)
 An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
 
 > Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
@@ -11,8 +10,15 @@ An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-
 
 - ✅ **Dynamic headers** — pass `Authorization`, `X-API-Key`, etc., via tool arguments (no config restarts)
 - ✅ **Robust variables parsing** — fixes `“Query variables must be a null or an object”` error
+- ✅ **Filtered introspection** — request only specific types (e.g., `typeNames: ["Query", "User"]`) to reduce LLM context noise
 - ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Cursor**, **Glama**, and **Smithery**
 - ✅ **Secure by default** — mutations disabled unless explicitly enabled
+
+## 🔍 Filtered Introspection (New!)
+
+Avoid 50k-line schema dumps. Ask for only what you need:
+
+@introspect-schema typeNames ["Query", "User"]
 
 ## 🔍 Debug & Inspect
 
@@ -21,7 +27,7 @@ Use the official MCP Inspector to test your server live:
 ```bash
 npx @modelcontextprotocol/inspector \
   -e ENDPOINT=https://api.example.com/graphql \
-  npx mcp-graphql-enhanced --debug
+  npx @letoribo/mcp-graphql-enhanced --debug
 ```
 
 ### Environment Variables (Breaking change in 1.0.0)
@@ -40,22 +46,22 @@ npx @modelcontextprotocol/inspector \
 
 ```bash
 # Basic usage
-ENDPOINT=http://localhost:3000/graphql npx mcp-graphql-enhanced
+ENDPOINT=http://localhost:3000/graphql npx @letoribo/mcp-graphql-enhanced
 
 # With auth header
 ENDPOINT=https://api.example.com/graphql \
 HEADERS='{"Authorization":"Bearer xyz"}' \
-npx mcp-graphql-enhanced
+npx @letoribo/mcp-graphql-enhanced
 
 # Enable mutations
 ENDPOINT=http://localhost:3000/graphql \
 ALLOW_MUTATIONS=true \
-npx mcp-graphql-enhanced
+npx @letoribo/mcp-graphql-enhanced
 
 # Use local schema file
 ENDPOINT=http://localhost:3000/graphql \
 SCHEMA=./schema.graphql \
-npx mcp-graphql-enhanced
+npx @letoribo/mcp-graphql-enhanced
 ```
 
 ## Resources
@@ -66,8 +72,9 @@ npx mcp-graphql-enhanced
 
 The server provides two main tools:
 
-1. **introspect-schema**: This tool retrieves the GraphQL schema. Use this first if you don't have access to the schema as a resource.
+1. **introspect-schema**: This tool retrieves the GraphQL schema or a filtered subset (via typeNames). Use this first if you don't have access to the schema as a resource.
 This uses either the local schema file, a schema file hosted at a URL, or an introspection query.
+Filtered introspection (typeNames) is only available when using a live GraphQL endpoint (not with SCHEMA file or URL).
 
 2. **query-graphql**: Execute GraphQL queries against the endpoint. By default, mutations are disabled unless `ALLOW_MUTATIONS` is set to `true`.
 
@@ -75,10 +82,10 @@ This uses either the local schema file, a schema file hosted at a URL, or an int
 
 ### Installing via Smithery
 
-To install GraphQL MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-graphql-enhanced):
+To install GraphQL MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@letoribo/mcp-graphql-enhanced):
 
 ```bash
-npx -y @smithery/cli install mcp-graphql-enhanced --client claude
+npx -y @smithery/cli install @letoribo/mcp-graphql-enhanced --client claude
 ```
 
 ### Installing Manually
@@ -89,7 +96,7 @@ It can be manually installed to Claude:
     "mcpServers": {
         "mcp-graphql": {
             "command": "npx",
-            "args": ["mcp-graphql-enhanced"],
+            "args": ["@letoribo/mcp-graphql-enhanced"],
             "env": {
                 "ENDPOINT": "https://your-api.com/graphql"
             }

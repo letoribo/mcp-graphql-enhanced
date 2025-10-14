@@ -9,6 +9,7 @@ const {
 	introspectEndpoint,
 	introspectLocalSchema,
 	introspectSchemaFromUrl,
+	introspectTypes,
 } = require("./helpers/introspection.js");
 
 // Simulate macro import — since "with { type: 'macro' }" is not CommonJS compatible
@@ -78,44 +79,47 @@ server.resource("graphql-schema", new URL(env.ENDPOINT).href, async (uri: URL) =
 	}
 });
 
-server.tool(
-	"introspect-schema",
-	"Introspect the GraphQL schema, use this tool before doing a query to get the schema information if you do not have it available as a resource already.",
-	{
-		__ignore__: z
-			.boolean()
-			.default(false)
-			.describe("This does not do anything"),
-	},
-	async () => {
-		try {
-			let schema;
-			if (env.SCHEMA) {
-				schema = await introspectLocalSchema(env.SCHEMA);
-			} else {
-				schema = await introspectEndpoint(env.ENDPOINT, env.HEADERS);
-			}
+interface IntrospectSchemaArgs {
+  typeNames?: string[];
+  descriptions?: boolean;
+  directives?: boolean;
+}
 
-			return {
-				content: [
-					{
-						type: "text",
-						text: schema,
-					},
-				],
-			};
-		} catch (error) {
-			return {
-				isError: true,
-				content: [
-					{
-						type: "text",
-						text: `Failed to introspect schema: ${error}`,
-					},
-				],
-			};
-		}
-	},
+server.tool(
+  "introspect-schema",
+  "Introspect the GraphQL schema. Optionally filter to specific types.",
+  {
+    typeNames: z.array(z.string()).optional().describe("e.g., [\"Query\", \"User\"]"),
+    descriptions: z.boolean().optional().default(true),
+    directives: z.boolean().optional().default(true),
+  },
+  async ({ typeNames, descriptions = true, directives = true }: IntrospectSchemaArgs) => {
+    try {
+      if (typeNames && typeNames.length > 0) {
+        // ✅ Use your existing introspectTypes helper
+        const filtered = await introspectTypes(env.ENDPOINT, env.HEADERS, typeNames);
+        return { content: [{ type: "text", text: filtered }] };
+      } else {
+        // Fallback to full schema
+        let schema: string;
+        if (env.SCHEMA) {
+          if (env.SCHEMA.startsWith("http://") || env.SCHEMA.startsWith("https://")) {
+            schema = await introspectSchemaFromUrl(env.SCHEMA);
+          } else {
+            schema = await introspectLocalSchema(env.SCHEMA);
+          }
+        } else {
+          schema = await introspectEndpoint(env.ENDPOINT, env.HEADERS);
+        }
+        return { content: [{ type: "text", text: schema }] };
+      }
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Introspection failed: ${error}` }],
+      };
+    }
+  }
 );
 
 server.tool(
