@@ -1,0 +1,11 @@
+{
+  "name": "@letoribo/mcp-graphql-enhanced",
+  "version": "2.1.2",
+  "description": "Enhanced MCP server for GraphQL with filtered introspection",
+  "transport": "stdio",
+  "tools": [
+    { "name": "introspect-schema" },
+    { "name": "query-graphql" }
+  ],
+  "resources": ["graphql-schema"]
+}
