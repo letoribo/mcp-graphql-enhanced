@@ -1,20 +1,24 @@
-# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
-
+name: mcp-graphql-enhanced
+description: MCP server for GraphQL APIs with filtered introspection and full variable support.
 startCommand:
   type: stdio
   configSchema:
-    # JSON Schema defining the configuration options for the MCP.
     type: object
     required:
       - endpoint
     properties:
       endpoint:
         type: string
-        description: The GraphQL server endpoint URL.
+        description: The GraphQL server endpoint URL (e.g., https://your-api.com/graphql).
       headers:
         type: string
-        description: Optional JSON string of headers to send with the GraphQL requests.
-  commandFunction:
-    # A function that produces the CLI command to start the MCP on stdio.
-    |-
-    (config) => ({ command: 'node', args: ['/app/dist/index.js', '--endpoint', config.endpoint].concat(config.headers ? ['--headers', config.headers] : []), env: {} })
+        description: Optional JSON string of headers (e.g., {"Authorization": "Bearer ..."}).
+  commandFunction: |
+    (config) => ({
+      command: "node",
+      args: ["dist/index.js"],
+      env: {
+        ENDPOINT: config.endpoint,
+        HEADERS: config.headers || undefined
+      }
+    })
