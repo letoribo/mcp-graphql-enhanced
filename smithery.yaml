@@ -9,10 +9,10 @@ startCommand:
     properties:
       endpoint:
         type: string
-        description: The GraphQL server endpoint URL (e.g., https://your-api.com/graphql).
+        description: The GraphQL server endpoint URL.
       headers:
         type: string
-        description: Optional JSON string of headers (e.g., {"Authorization": "Bearer ..."}).
+        description: Optional JSON string of headers.
   commandFunction: |
     (config) => ({
       command: "node",
