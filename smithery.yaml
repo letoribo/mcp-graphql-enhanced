@@ -1,5 +1,5 @@
 name: mcp-graphql-enhanced
-description: MCP server for GraphQL APIs with filtered introspection and full variable support.
+description: MCP server for GraphQL APIs with filtered introspection.
 startCommand:
   type: stdio
   configSchema:
@@ -9,16 +9,22 @@ startCommand:
     properties:
       endpoint:
         type: string
-        description: The GraphQL server endpoint URL.
+        description: GraphQL endpoint URL
       headers:
         type: string
-        description: Optional JSON string of headers.
+        description: Optional JSON headers
   commandFunction: |
-    (config) => ({
-      command: "node",
-      args: ["dist/index.js"],
-      env: {
-        ENDPOINT: config.endpoint,
-        HEADERS: config.headers || undefined
+    (config) => {
+      const env = {};
+      if (config.endpoint) {
+        env.ENDPOINT = config.endpoint;
       }
-    })
+      if (config.headers) {
+        env.HEADERS = config.headers;
+      }
+      return {
+        command: "node",
+        args: ["dist/index.js"],
+        env: env
+      };
+    }
