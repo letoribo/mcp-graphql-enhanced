@@ -1,5 +1,5 @@
 name: mcp-graphql-enhanced
-description: Enhanced MCP server for GraphQL with filtered introspection and full variable support.
+description: Enhanced MCP server for GraphQL with filtered introspection.
 startCommand:
   type: stdio
   configSchema:
