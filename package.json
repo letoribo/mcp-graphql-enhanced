@@ -16,7 +16,7 @@
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"bin": {
-		"mcp-graphql-enhanced": "./dist/index.js"
+		"mcp-graphql-enhanced": "dist/index.js"
 	},
 	"files": [
 		"dist",
