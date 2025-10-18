@@ -19,7 +19,10 @@
 		"mcp-graphql-enhanced": "./dist/index.js"
 	},
 	"files": [
-		"dist"
+		"dist",
+		"mcp-manifest.json",
+		"LICENSE",
+		"README.md"
 	],
 	"engines": {
 		"node": ">=18"

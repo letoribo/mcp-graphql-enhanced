@@ -1,11 +1,36 @@
 {
   "name": "@letoribo/mcp-graphql-enhanced",
-  "version": "2.1.2",
-  "description": "Enhanced MCP server for GraphQL with filtered introspection",
+  "version": "2.1.3",
+  "description": "Enhanced MCP server for GraphQL with filtered introspection and full variable support.",
   "transport": "stdio",
   "tools": [
-    { "name": "introspect-schema" },
-    { "name": "query-graphql" }
+    {
+      "name": "introspect-schema",
+      "description": "Fetch filtered GraphQL schema by type names"
+    },
+    {
+      "name": "query-graphql",
+      "description": "Execute GraphQL queries with variables and headers"
+    }
   ],
-  "resources": ["graphql-schema"]
+  "resources": [
+    {
+      "name": "graphql-schema",
+      "description": "GraphQL schema as a resource"
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "required": ["ENDPOINT"],
+    "properties": {
+      "ENDPOINT": {
+        "type": "string",
+        "description": "GraphQL endpoint URL"
+      },
+      "HEADERS": {
+        "type": "string",
+        "description": "JSON string of headers"
+      }
+    }
+  }
 }
