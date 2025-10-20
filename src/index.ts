@@ -93,6 +93,8 @@ server.tool(
   "Introspect the GraphQL schema. Optionally filter to specific types.",
   {
     typeNames: z.array(z.string()).optional().describe("e.g., [\"Query\", \"User\"]"),
+	endpoint: z.string().optional(),
+    headers: z.string().optional(), 
     descriptions: z.boolean().optional().default(true),
     directives: z.boolean().optional().default(true),
   },

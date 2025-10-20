@@ -1,0 +1,7 @@
+# Ignore everything except what's needed for build
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**

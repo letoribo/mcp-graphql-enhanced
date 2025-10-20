@@ -14,6 +14,7 @@
 	"license": "MIT",
 	"repository": "github:letoribo/mcp-graphql-enhanced",
 	"main": "dist/index.js",
+	"module": "src/index.ts",
 	"types": "dist/index.d.ts",
 	"bin": {
 		"mcp-graphql-enhanced": "dist/index.js"

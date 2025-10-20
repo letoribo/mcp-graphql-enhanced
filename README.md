@@ -1,5 +1,4 @@
 # mcp-graphql-enhanced
-[![Smithery](https://smithery.ai/badge/@letoribo/mcp-graphql-enhanced)](https://smithery.ai/server/@letoribo/mcp-graphql-enhanced)
 [![Glama](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced/badge)](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)
 An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
 > Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
@@ -7,7 +6,7 @@ An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-
 - ✅ **Dynamic headers** — pass `Authorization`, `X-API-Key`, etc., via tool arguments (no config restarts)
 - ✅ **Robust variables parsing** — fixes `“Query variables must be a null or an object”` error
 - ✅ **Filtered introspection** — request only specific types (e.g., `typeNames: ["Query", "User"]`) to reduce LLM context noise
-- ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Cursor**, **Glama**, and **Smithery**
+- ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Cursor**, **Glama**
 - ✅ **Secure by default** — mutations disabled unless explicitly enabled
 ## 🔍 Filtered Introspection (New!)
 Avoid 50k-line schema dumps. Ask for only what you need:
@@ -24,7 +23,7 @@ npx @modelcontextprotocol/inspector \
 
 | Environment Variable | Description | Default |
 |----------|-------------|---------|
-| `ENDPOINT` | GraphQL endpoint URL | `http://localhost:4000/graphql` |
+| `ENDPOINT` | GraphQL endpoint URL | `https://mcp-neo4j-discord.vercel.app/api/graphiql` |
 | `HEADERS` | JSON string containing headers for requests | `{}` |
 | `ALLOW_MUTATIONS` | Enable mutation operations (disabled by default) | `false` |
 | `NAME` | Name of the MCP server | `mcp-graphql-enhanced` |
@@ -105,12 +104,6 @@ The server provides two main tools:
 This uses either the local schema file, a schema file hosted at a URL, or an introspection query.
 Filtered introspection (typeNames) is only available when using a live GraphQL endpoint (not with SCHEMA file or URL).
 2. **query-graphql**: Execute GraphQL queries against the endpoint. By default, mutations are disabled unless `ALLOW_MUTATIONS` is set to `true`.
-## Installation
-#### Installing via Smithery
-To install GraphQL MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@letoribo/mcp-graphql-enhanced):
-```bash
-npx -y @smithery/cli install @letoribo/mcp-graphql-enhanced --client claude
-```
 ## Security Considerations
 Mutations are disabled by default to prevent unintended data changes. Always validate HEADERS and SCHEMA inputs in production. Use HTTPS endpoints and short-lived tokens where possible.
 ## Customize for your own server
