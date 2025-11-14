@@ -8,13 +8,13 @@ const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio
 const { parse } = require("graphql/language");
 const z = require("zod").default;
 
-const { checkDeprecatedArguments } = require("./helpers/deprecation.ts");
+const { checkDeprecatedArguments } = require("./helpers/deprecation");
 const {
 	introspectEndpoint,
 	introspectLocalSchema,
 	introspectSchemaFromUrl,
 	introspectTypes,
-} = require("./helpers/introspection.ts");
+} = require("./helpers/introspection");
 
 const getVersion = () => {
 	const pkg = require("../package.json");
