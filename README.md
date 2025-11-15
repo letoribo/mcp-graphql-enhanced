@@ -24,16 +24,24 @@ This allows external systems, web applications, and direct `curl` commands to ac
 | `/mcp` | `POST` | The main JSON-RPC endpoint for tool execution. |
 | `/health` | `GET` | Simple health check, returns `{ status: 'ok' }`. |
 
+### Resolving Port Conflicts (EADDRINUSE) and Automatic Port Selection
+
+The server defaults to port `6274`. If you encounter an `EADDRINUSE: address already in use :::6274` error (common in local development due to stale processes), the server will automatically **increment the port and retry** (e.g., bind to `6275`, then `6276`, etc., up to 5 times).
+
+This ensures the server starts successfully even when the default is blocked. **Always check the server logs for the final bound port** (e.g., `[HTTP] Started server on http://localhost:6275`) if your `curl` or client tool fails on the default `6274`.
+
+To **force a specific port** (e.g., for guaranteed external firewall settings), you can still explicitly set the `MCP_PORT` environment variable:
+
 ### Testing the HTTP Endpoint
 
 You can test the endpoint using `curl` as long as the server is running (e.g., via `npm run dev`):
 
 ```bash
-# Test the health check
+# Test the health check (assuming the server bound to the default or found the next available port)
 curl http://localhost:6274/health
 
-# Test the query tool via JSON-RPC
-curl -X POST http://localhost:6274/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"query-graphql","params":{"query":"query { __typename }"},"id":1}'
+# Example: Test the query tool via JSON-RPC (using port 6275 if 6274 was busy)
+curl -X POST http://localhost:6275/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"query-graphql","params":{"query":"query { __typename }"},"id":1}'
 
 ## 🔍 Filtered Introspection (New!)
 Avoid 50k-line schema dumps. Ask for only what you need:
