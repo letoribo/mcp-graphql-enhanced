@@ -1,20 +1,18 @@
 #!/usr/bin/env node
 
-import type { IncomingMessage, ServerResponse } from "node:http";
-
-const http = require("node:http");
+import http, { IncomingMessage, ServerResponse } from "node:http";
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { parse } = require("graphql/language");
 const z = require("zod").default;
 
-const { checkDeprecatedArguments } = require("./helpers/deprecation");
+const { checkDeprecatedArguments } = require("./helpers/deprecation.js");
 const {
 	introspectEndpoint,
 	introspectLocalSchema,
 	introspectSchemaFromUrl,
 	introspectTypes,
-} = require("./helpers/introspection");
+} = require("./helpers/introspection.js");
 
 const getVersion = () => {
 	const pkg = require("../package.json");
@@ -356,13 +354,66 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 	res.end('Not Found. Use POST /mcp for JSON-RPC or GET /health.');
 }
 
-function startHttpTransport() {
-	const server = http.createServer(handleHttpRequest);
+/**
+ * Tries to listen on a given port, automatically retrying on the next port if EADDRINUSE occurs.
+ * @param server - The HTTP server instance.
+ * @param port - The port to attempt binding to.
+ * @param maxRetries - Maximum number of retries.
+ * @param attempt - Current attempt number.
+ * @returns Resolves with the bound server instance.
+ */
+function tryListen(server: http.Server, port: number, maxRetries = 5, attempt = 0): Promise<http.Server> {
+	return new Promise((resolve, reject) => {
+		if (attempt >= maxRetries) {
+			reject(
+				new Error(
+					`Failed to bind HTTP server after ${maxRetries} attempts, starting from port ${env.MCP_PORT}.`
+				)
+			);
+			return;
+		}
 
-	server.listen(env.MCP_PORT, () => {
-		console.error(
-			`[HTTP] Started server on http://localhost:${env.MCP_PORT}. Listening for POST /mcp requests.`
-		);
+		if (port > 65535) {
+			reject(new Error(`Exceeded maximum port number (65535) during retry.`));
+			return;
+		}
+
+		const errorHandler = (err: NodeJS.ErrnoException) => {
+			server.removeListener('error', errorHandler); // Remove listener to prevent memory leak
+
+			if (err.code === 'EADDRINUSE') {
+				const nextPort = port + 1;
+				// Use console.error so it appears in the Inspector log
+				console.error(
+					`[HTTP] Port ${port} is in use (EADDRINUSE). Retrying on ${nextPort}...`
+				);
+				
+				server.close(() => {
+					// Recursively call tryListen with the next port
+					resolve(tryListen(server, nextPort, maxRetries, attempt + 1));
+				});
+			} else {
+				reject(err);
+			}
+		};
+		
+		server.on('error', errorHandler);
+
+		server.listen(port, () => {
+			server.removeListener('error', errorHandler); // success, remove the error listener
+			console.error(
+				`[HTTP] Started server on http://localhost:${port}. Listening for POST /mcp requests.`
+			);
+			resolve(server);
+		});
+	});
+}
+
+function startHttpTransport() {
+	const serverInstance = http.createServer(handleHttpRequest);
+	
+	tryListen(serverInstance, env.MCP_PORT).catch((error) => {
+		console.error(`[HTTP] Failed to start HTTP transport: ${error.message}`);
 	});
 }
 
