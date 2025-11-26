@@ -45,7 +45,6 @@
 		"@graphql-tools/schema": "^10.0.23",
 		"@types/node": "^24.7.2",
 		"@types/yargs": "17.0.33",
-		"graphql-yoga": "^5.13.5",
 		"prettier": "^3.6.2",
 		"ts-node": "^10.9.2",
 		"typescript": "5.8.3"

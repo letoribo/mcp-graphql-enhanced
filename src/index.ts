@@ -122,7 +122,7 @@ server.tool(
   "introspect-schema",
   "Introspect the GraphQL schema. Optionally filter to specific types.",
   {
-    typeNames: z.array(z.string()).optional().describe("e.g., [\"Query\", \"User\"]"),
+    typeNames: z.array(z.string()).optional().describe("A list of specific type names to filter the introspection."),
     descriptions: z.boolean().optional().default(true),
     directives: z.boolean().optional().default(true),
   },
