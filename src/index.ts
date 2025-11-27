@@ -92,7 +92,10 @@ server.resource("graphql-schema", new URL(env.ENDPOINT).href, async (uri: URL) =
 const toolHandlers = new Map();
 
 const introspectSchemaHandler = async ({ typeNames, descriptions = true, directives = true }: any) => {
-    try {
+    if (typeNames === null) {
+      typeNames = undefined;
+    }
+	try {
       if (typeNames && typeNames.length > 0) {
         const filtered = await introspectTypes(env.ENDPOINT, env.HEADERS, typeNames);
         return { content: [{ type: "text", text: filtered }] };
