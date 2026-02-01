@@ -26,7 +26,7 @@ This allows external systems, web applications, and direct `curl` commands to ac
 
 ### Resolving Port Conflicts (EADDRINUSE) and Automatic Port Selection
 
-The server defaults to port `6274`. If you encounter an `EADDRINUSE: address already in use :::6274` error (common in local development due to stale processes), the server will automatically **increment the port and retry** (e.g., bind to `6275`, then `6276`, etc., up to 5 times).
+The server defaults to port `6274`. If you encounter an `EADDRINUSE: address already in use :::6274` error (common in local development due to stale processes), the server will automatically find the next available port (up to 10 attempts, not spawning multiple servers).
 
 This ensures the server starts successfully even when the default is blocked. **Always check the server logs for the final bound port** (e.g., `[HTTP] Started server on http://localhost:6275`) if your `curl` or client tool fails on the default `6274`.
 
@@ -64,6 +64,11 @@ npx @modelcontextprotocol/inspector \
 | `NAME` | Name of the MCP server | `mcp-graphql-enhanced` |
 | `SCHEMA` | Path to a local GraphQL schema file or URL (optional) | - |
 | `MCP_PORT` | Port for the HTTP/JSON-RPC server. | `6274` |
+| `ENABLE_HTTP` | Enable HTTP transport: `auto` (default), `true`, or `false` | `auto` |
+**Note on `ENABLE_HTTP`:** 
+- `auto` (default): Automatically enables HTTP only when running in MCP Inspector...
+- `true`: Always enable HTTP server
+- `false`: Disable HTTP server completely
 ### Examples
 ```bash
 # Basic usage
@@ -82,6 +87,8 @@ SCHEMA=./schema.graphql \
 npx @letoribo/mcp-graphql-enhanced
 # Change the HTTP port
 MCP_PORT=8080 npx @letoribo/mcp-graphql-enhanced
+# Disable HTTP transport (fastest, recommended for Claude Desktop)
+ENABLE_HTTP=false npx @letoribo/mcp-graphql-enhanced
 ```
 ### 🖥️ Claude Desktop Configuration Examples
 You can connect Claude Desktop to your GraphQL API using either the npx package (recommended for simplicity) or the Docker image (ideal for reproducibility and isolation).

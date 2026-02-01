@@ -50,6 +50,17 @@ const EnvSchema = z.object({
 		(val: unknown) => (val ? parseInt(val as string) : 6274),
 		z.number().int().min(1024).max(65535)
 	).default(6274),
+	ENABLE_HTTP: z
+		.enum(["true", "false", "auto"])
+		.transform((value: string) => {
+			if (value === "auto") {
+				// Auto-detect: enable HTTP if running in MCP Inspector
+				// Inspector sets specific environment variables
+				return !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT);
+			}
+			return value === "true";
+		})
+		.default("auto"), // Auto-detect by default
 });
 
 const env = EnvSchema.parse(process.env);
@@ -60,9 +71,24 @@ const server = new McpServer({
 	description: `GraphQL MCP server for ${env.ENDPOINT}`,
 });
 
-server.resource("graphql-schema", new URL(env.ENDPOINT).href, async (uri: URL) => { 
+
+// Cache schema to avoid repeated introspection
+let cachedSchema: string | null = null;
+let schemaLoadError: Error | null = null;
+
+async function getSchema(): Promise<string> {
+	// Return cached schema if available
+	if (cachedSchema) {
+		return cachedSchema;
+	}
+
+	// Return cached error if schema failed to load
+	if (schemaLoadError) {
+		throw schemaLoadError;
+	}
+
 	try {
-		let schema;
+		let schema: string;
 		if (env.SCHEMA) {
 			if (
 				env.SCHEMA.startsWith("http://") ||
@@ -75,7 +101,20 @@ server.resource("graphql-schema", new URL(env.ENDPOINT).href, async (uri: URL) =
 		} else {
 			schema = await introspectEndpoint(env.ENDPOINT, env.HEADERS);
 		}
+		
+		// Cache the schema
+		cachedSchema = schema;
+		console.error(`[SCHEMA] Successfully loaded and cached GraphQL schema`);
+		return schema;
+	} catch (error) {
+		schemaLoadError = error as Error;
+		throw new Error(`Failed to get GraphQL schema: ${error}`);
+	}
+}
 
+server.resource("graphql-schema", new URL(env.ENDPOINT).href, async (uri: URL) => { 
+	try {
+		const schema = await getSchema();
 		return {
 			contents: [
 				{
@@ -85,39 +124,30 @@ server.resource("graphql-schema", new URL(env.ENDPOINT).href, async (uri: URL) =
 			],
 		};
 	} catch (error) {
-		throw new Error(`Failed to get GraphQL schema: ${error}`);
+		throw error;
 	}
 });
 
 const toolHandlers = new Map();
 
 const introspectSchemaHandler = async ({ typeNames, descriptions = true, directives = true }: any) => {
-    if (typeNames === null) {
+    if (typeNames === null) {
       typeNames = undefined;
     }
 	try {
-      if (typeNames && typeNames.length > 0) {
-        const filtered = await introspectTypes(env.ENDPOINT, env.HEADERS, typeNames);
-        return { content: [{ type: "text", text: filtered }] };
-      } else {
-        let schema;
-        if (env.SCHEMA) {
-          if (env.SCHEMA.startsWith("http://") || env.SCHEMA.startsWith("https://")) {
-            schema = await introspectSchemaFromUrl(env.SCHEMA);
-          } else {
-            schema = await introspectLocalSchema(env.SCHEMA);
-          }
-        } else {
-          schema = await introspectEndpoint(env.ENDPOINT, env.HEADERS);
-        }
-        return { content: [{ type: "text", text: schema }] };
-      }
-    } catch (error) {
-      return {
-        isError: true,
-        content: [{ type: "text", text: `Introspection failed: ${error}` }],
-      };
-    }
+      if (typeNames && typeNames.length > 0) {
+        const filtered = await introspectTypes(env.ENDPOINT, env.HEADERS, typeNames);
+        return { content: [{ type: "text", text: filtered }] };
+      } else {
+        const schema = await getSchema();
+        return { content: [{ type: "text", text: schema }] };
+      }
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Introspection failed: ${error}` }],
+      };
+    }
 };
 toolHandlers.set("introspect-schema", introspectSchemaHandler);
 
@@ -357,66 +387,51 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 	res.end('Not Found. Use POST /mcp for JSON-RPC or GET /health.');
 }
 
+// Single HTTP server instance
+let httpServer: http.Server | null = null;
+
 /**
- * Tries to listen on a given port, automatically retrying on the next port if EADDRINUSE occurs.
- * @param server - The HTTP server instance.
- * @param port - The port to attempt binding to.
- * @param maxRetries - Maximum number of retries.
- * @param attempt - Current attempt number.
- * @returns Resolves with the bound server instance.
+ * Tries to listen on a given port with a single retry attempt.
+ * Returns the port it successfully bound to.
  */
-function tryListen(server: http.Server, port: number, maxRetries = 5, attempt = 0): Promise<http.Server> {
+async function startHttpServer(initialPort: number): Promise<number> {
 	return new Promise((resolve, reject) => {
-		if (attempt >= maxRetries) {
-			reject(
-				new Error(
-					`Failed to bind HTTP server after ${maxRetries} attempts, starting from port ${env.MCP_PORT}.`
-				)
-			);
-			return;
-		}
+		let currentPort = initialPort;
+		const maxAttempts = 10;
+		let attempts = 0;
 
-		if (port > 65535) {
-			reject(new Error(`Exceeded maximum port number (65535) during retry.`));
-			return;
-		}
-
-		const errorHandler = (err: NodeJS.ErrnoException) => {
-			server.removeListener('error', errorHandler); // Remove listener to prevent memory leak
-
-			if (err.code === 'EADDRINUSE') {
-				const nextPort = port + 1;
-				// Use console.error so it appears in the Inspector log
-				console.error(
-					`[HTTP] Port ${port} is in use (EADDRINUSE). Retrying on ${nextPort}...`
-				);
-				
-				server.close(() => {
-					// Recursively call tryListen with the next port
-					resolve(tryListen(server, nextPort, maxRetries, attempt + 1));
-				});
-			} else {
-				reject(err);
+		function tryPort(port: number) {
+			if (attempts >= maxAttempts) {
+				reject(new Error(`Failed to bind HTTP server after ${maxAttempts} attempts`));
+				return;
 			}
-		};
-		
-		server.on('error', errorHandler);
 
-		server.listen(port, () => {
-			server.removeListener('error', errorHandler); // success, remove the error listener
-			console.error(
-				`[HTTP] Started server on http://localhost:${port}. Listening for POST /mcp requests.`
-			);
-			resolve(server);
-		});
-	});
-}
+			if (port > 65535) {
+				reject(new Error(`Exceeded maximum port number (65535)`));
+				return;
+			}
 
-function startHttpTransport() {
-	const serverInstance = http.createServer(handleHttpRequest);
-	
-	tryListen(serverInstance, env.MCP_PORT).catch((error) => {
-		console.error(`[HTTP] Failed to start HTTP transport: ${error.message}`);
+			attempts++;
+			const server = http.createServer(handleHttpRequest);
+
+			server.once('error', (err: NodeJS.ErrnoException) => {
+				if (err.code === 'EADDRINUSE') {
+					console.error(`[HTTP] Port ${port} in use, trying ${port + 1}...`);
+					server.close();
+					tryPort(port + 1);
+				} else {
+					reject(err);
+				}
+			});
+
+			server.listen(port, () => {
+				httpServer = server;
+				console.error(`[HTTP] Server started on http://localhost:${port}`);
+				resolve(port);
+			});
+		}
+
+		tryPort(currentPort);
 	});
 }
 
@@ -424,12 +439,50 @@ async function main() {
 	const stdioTransport = new StdioServerTransport();
 	await server.connect(stdioTransport);
 
-	startHttpTransport();
+	// Only start HTTP server if explicitly enabled
+	if (env.ENABLE_HTTP) {
+		try {
+			const port = await startHttpServer(env.MCP_PORT);
+			console.error(`[HTTP] Listening on port ${port} for POST /mcp requests`);
+		} catch (error) {
+			console.error(`[HTTP] Failed to start HTTP server: ${error}`);
+			// Don't exit - STDIO transport is more important
+		}
+	} else {
+		console.error(`[HTTP] HTTP transport disabled (ENABLE_HTTP=auto|true to enable)`);
+	}
 
-	console.error(
-		`[STDIO] Started graphql mcp server ${env.NAME} for endpoint: ${env.ENDPOINT}`,
-	);
+	try {
+		await getSchema();
+	} catch (error) {
+		console.error(`[SCHEMA] Warning: Failed to pre-load schema: ${error}`);
+	}
 }
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+	console.error('\n[SHUTDOWN] Received SIGINT, closing server...');
+	if (httpServer) {
+		httpServer.close(() => {
+			console.error('[SHUTDOWN] HTTP server closed');
+			process.exit(0);
+		});
+	} else {
+		process.exit(0);
+	}
+});
+
+process.on('SIGTERM', () => {
+	console.error('\n[SHUTDOWN] Received SIGTERM, closing server...');
+	if (httpServer) {
+		httpServer.close(() => {
+			console.error('[SHUTDOWN] HTTP server closed');
+			process.exit(0);
+		});
+	} else {
+		process.exit(0);
+	}
+});
 
 main().catch((error) => {
 	console.error(`Fatal error in main(): ${error}`);
