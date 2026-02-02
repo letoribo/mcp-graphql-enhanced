@@ -1,22 +1,19 @@
 import {
   buildClientSchema,
   getIntrospectionQuery,
-  GraphQLObjectType,
-  GraphQLInterfaceType,
-  GraphQLUnionType,
-  GraphQLEnumType,
-  GraphQLScalarType,
-  GraphQLInputObjectType,
-  GraphQLNamedType,
+  GraphQLSchema,
+  isObjectType,
+  isInterfaceType,
+  isInputObjectType,
+  isEnumType,
+  isUnionType,
+  isScalarType,
   printSchema,
 } from "graphql";
 import { readFile } from "node:fs/promises";
 
 /**
  * Introspect a GraphQL endpoint and return the schema as the GraphQL SDL
- * @param endpoint - The endpoint to introspect
- * @param headers - Optional headers to include in the request
- * @returns The schema
  */
 export async function introspectEndpoint(
   endpoint: string,
@@ -26,7 +23,7 @@ export async function introspectEndpoint(
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify({
-      query: getIntrospectionQuery(), // Removed invalid options
+      query: getIntrospectionQuery(),
     }),
   });
 
@@ -40,47 +37,88 @@ export async function introspectEndpoint(
 }
 
 /**
- * Introspect a GraphQL schema file hosted at a URL and return the schema as the GraphQL SDL
- * @param url - The URL to the schema file
- * @returns The schema
+ * Introspect a local GraphQL schema file
  */
-export async function introspectSchemaFromUrl(url: string) {
-	const response = await fetch(url);
-
-	if (!response.ok) {
-		throw new Error(`Failed to fetch schema from URL: ${response.statusText}`);
-	}
-
-	const schema = await response.text();
-	return schema;
+export async function introspectLocalSchema(path: string) {
+  return await readFile(path, "utf8");
 }
 
 /**
- * Introspect a local GraphQL schema file and return the schema as the GraphQL SDL
- * @param path - The path to the local schema file
- * @returns The schema
+ * Extract and filter specific types from a schema object.
+ * Prevents "No result received" errors by only sending requested parts of the graph.
  */
-export async function introspectLocalSchema(path: string) {
-	const schema = await readFile(path, "utf8");
-	return schema;
+export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string[]) {
+  const result: Record<string, any> = {};
+
+  for (const name of typeNames) {
+    const type = schema.getType(name);
+    if (!type) continue;
+
+    if (isObjectType(type) || isInterfaceType(type)) {
+      result[name] = {
+        kind: isInterfaceType(type) ? "INTERFACE" : "OBJECT",
+        description: type.description,
+        fields: Object.fromEntries(
+          Object.entries(type.getFields())
+            .filter(([_, field]) => !field.deprecationReason)
+            .map(([fieldName, field]) => [
+              fieldName,
+              {
+                type: field.type.toString(),
+                description: field.description,
+                args: field.args
+                  .filter(arg => !arg.deprecationReason)
+                  .map(arg => ({
+                    name: arg.name,
+                    type: arg.type.toString(),
+                    description: arg.description,
+                  }))
+              }
+            ])
+        )
+      };
+    } else if (isInputObjectType(type)) {
+      result[name] = {
+        kind: "INPUT_OBJECT",
+        description: type.description,
+        fields: Object.fromEntries(
+          Object.entries(type.getFields())
+            .filter(([_, field]) => !field.deprecationReason)
+            .map(([fieldName, field]) => [
+              fieldName,
+              { type: field.type.toString(), description: field.description }
+            ])
+        )
+      };
+    } else if (isEnumType(type)) {
+      result[name] = {
+        kind: "ENUM",
+        description: type.description,
+        values: type.getValues().map(v => ({ 
+          name: v.name, 
+          description: v.description 
+        }))
+      };
+    } else if (isUnionType(type)) {
+      result[name] = {
+        kind: "UNION",
+        description: type.description,
+        possibleTypes: type.getTypes().map(t => t.name)
+      };
+    } else if (isScalarType(type)) {
+      result[name] = {
+        kind: "SCALAR",
+        description: type.description
+      };
+    }
+  }
+
+  return result;
 }
 
-function isObjectLikeType(type: GraphQLNamedType): type is GraphQLObjectType | GraphQLInterfaceType {
-  return 'getFields' in type;
-}
-
-function isUnionType(type: GraphQLNamedType): type is GraphQLUnionType {
-  return 'getTypes' in type;
-}
-
-function isEnumType(type: GraphQLNamedType): type is GraphQLEnumType {
-  return 'getValues' in type;
-}
-
-function isInputObjectType(type: GraphQLNamedType): type is GraphQLInputObjectType {
-  return 'getFields' in type;
-}
-
+/**
+ * Backwards compatibility helper for direct endpoint introspection
+ */
 export async function introspectTypes(
   endpoint: string,
   headers: Record<string, string> = {},
@@ -94,80 +132,6 @@ export async function introspectTypes(
   const data = await response.json();
   const schema = buildClientSchema(data.data);
 
-  const result: Record<string, any> = {};
-  for (const name of typeNames) {
-    const type = schema.getType(name);
-    if (!type) continue;
-
-    // Handle object/interface types
-    if (isObjectLikeType(type)) {
-      result[name] = {
-        kind: type instanceof GraphQLObjectType ? "OBJECT" : "INTERFACE",
-        description: type.description,
-        fields: Object.fromEntries(
-          Object.entries(type.getFields())
-            // Filter out deprecated fields
-            .filter(([_, field]) => !field.deprecationReason) 
-            .map(([fieldName, field]) => [
-              fieldName,
-              {
-                type: field.type.toString(),
-                description: field.description,
-                args: field.args
-                  // Filter out deprecated arguments
-                  .filter(arg => !arg.deprecationReason)
-                  .map(arg => ({
-                    name: arg.name,
-                    type: arg.type.toString(),
-                    description: arg.description,
-                  }))
-              }
-            ])
-        )
-      };
-    }
-    // Handle union types
-    else if (isUnionType(type)) {
-      result[name] = {
-        kind: "UNION",
-        description: type.description,
-        possibleTypes: type.getTypes().map(t => t.name)
-      };
-    }
-    // Handle enums
-    else if (isEnumType(type)) {
-      result[name] = {
-        kind: "ENUM",
-        description: type.description,
-        values: type.getValues().map(v => ({
-          name: v.name,
-          description: v.description
-        }))
-      };
-    }
-    // Handle scalars and input objects
-    else if (isInputObjectType(type)) {
-      result[name] = {
-        kind: "INPUT_OBJECT",
-        description: type.description,
-        fields: Object.fromEntries(
-          Object.entries(type.getFields())
-            // FILTER: Skip deprecated input fields
-            .filter(([_, field]) => !field.deprecationReason)
-            .map(([fieldName, field]) => [
-              fieldName,
-              { type: field.type.toString(), description: field.description }
-            ])
-        )
-      };
-    }
-    else if (type instanceof GraphQLScalarType) {
-      result[name] = {
-        kind: "SCALAR",
-        description: type.description
-      };
-    }
-  }
-
-  return JSON.stringify(result, null, 2);
+  const result = introspectSpecificTypes(schema, typeNames);
+  return JSON.stringify(result);
 }
