@@ -143,10 +143,7 @@ const introspectSchemaHandler = async ({ typeNames, descriptions = true, directi
         return { content: [{ type: "text", text: schema }] };
       }
     } catch (error) {
-      return {
-        isError: true,
-        content: [{ type: "text", text: `Introspection failed: ${error}` }],
-      };
+      throw new Error(`Introspection failed: ${error}`);  // ✅ Throw instead
     }
 };
 toolHandlers.set("introspect-schema", introspectSchemaHandler);
@@ -172,26 +169,10 @@ const queryGraphqlHandler = async ({ query, variables, headers }: any) => {
 		);
 
 		if (isMutation && !env.ALLOW_MUTATIONS) {
-			return {
-				isError: true,
-				content: [
-					{
-						type: "text",
-						text: "Mutations are not allowed unless you enable them in the configuration. Please use a query operation instead.",
-					},
-				],
-			};
+			throw new Error("Mutations are not allowed unless you enable them in the configuration. Please use a query operation instead.");
 		}
 	} catch (error) {
-		return {
-			isError: true,
-			content: [
-				{
-					type: "text",
-					text: `Invalid GraphQL query: ${error}`,
-				},
-			],
-		};
+		throw new Error(`Invalid GraphQL query: ${error}`);
 	}
 
 	try {
@@ -225,15 +206,7 @@ const queryGraphqlHandler = async ({ query, variables, headers }: any) => {
 
 		if (!response.ok) {
 			const responseText = await response.text();
-			return {
-				isError: true,
-				content: [
-					{
-						type: "text",
-						text: `GraphQL request failed: ${response.statusText}\n${responseText}`,
-					},
-				],
-			};
+			throw new Error(`GraphQL request failed: ${response.statusText}\n${responseText}`);
 		}
 
 		const rawData = await response.json();
@@ -241,15 +214,7 @@ const queryGraphqlHandler = async ({ query, variables, headers }: any) => {
 		const data = rawData;
 
 		if (data.errors && data.errors.length > 0) {
-			return {
-				isError: true,
-				content: [
-					{
-						type: "text",
-						text: `GraphQL errors: ${JSON.stringify(data.errors, null, 2)}`,
-					},
-				],
-			};
+			throw new Error(`GraphQL errors: ${JSON.stringify(data.errors, null, 2)}`);
 		}
 
 		return {
@@ -261,15 +226,7 @@ const queryGraphqlHandler = async ({ query, variables, headers }: any) => {
 			],
 		};
 	} catch (error) {
-		return {
-			isError: true,
-			content: [
-				{
-					type: "text",
-					text: `Failed to execute GraphQL query: ${error}`,
-				},
-			],
-		};
+		throw new Error(`Failed to execute GraphQL query: ${error}`);
 	}
 };
 toolHandlers.set("query-graphql", queryGraphqlHandler);
@@ -436,27 +393,33 @@ async function startHttpServer(initialPort: number): Promise<number> {
 }
 
 async function main() {
+	// Pre-load schema FIRST (parallel with server setup)
+	console.error(`[SCHEMA] Pre-loading GraphQL schema...`);
+	const schemaPromise = getSchema().catch((error) => {
+		console.error(`[SCHEMA] Warning: Failed to pre-load schema: ${error}`);
+	});
+
 	const stdioTransport = new StdioServerTransport();
 	await server.connect(stdioTransport);
+	
+	console.error(
+		`[STDIO] Started GraphQL MCP server ${env.NAME} for endpoint: ${env.ENDPOINT}`,
+	);
 
-	// Only start HTTP server if explicitly enabled
+	// Only start HTTP if needed
 	if (env.ENABLE_HTTP) {
 		try {
 			const port = await startHttpServer(env.MCP_PORT);
 			console.error(`[HTTP] Listening on port ${port} for POST /mcp requests`);
 		} catch (error) {
 			console.error(`[HTTP] Failed to start HTTP server: ${error}`);
-			// Don't exit - STDIO transport is more important
 		}
 	} else {
 		console.error(`[HTTP] HTTP transport disabled (ENABLE_HTTP=auto|true to enable)`);
 	}
 
-	try {
-		await getSchema();
-	} catch (error) {
-		console.error(`[SCHEMA] Warning: Failed to pre-load schema: ${error}`);
-	}
+	// Wait for schema to finish loading
+	await schemaPromise;
 }
 
 // Graceful shutdown
