@@ -17,12 +17,15 @@ An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-
 
 This server now runs in **dual transport mode**, supporting both the standard **STDIO** communication (used by most MCP clients) and a new **HTTP JSON-RPC** endpoint on port `6274`.
 
-This allows external systems, web applications, and direct `curl` commands to access the server's tools.
+This allows external systems, web applications, and direct `curl` commands to access the server's tools with **live request logging** in your terminal (`[HTTP-RPC]` logs).
 
 | **Endpoint** | **Method** | **Description** |
 | :--- | :--- | :--- |
-| `/mcp` | `POST` | The main JSON-RPC endpoint for tool execution. |
+| `/mcp` | `POST` | The main JSON-RPC 2.0 endpoint for tool execution. |
 | `/health` | `GET` | Simple health check, returns `{ status: 'ok' }`. |
+
+### Automatic Port Selection
+The server defaults to port `6274`. If you encounter an `EADDRINUSE` error, the server will automatically find the next available port. **Check the server logs for the final bound port** (e.g., `[HTTP] Started server on http://localhost:6275`).
 
 ### Resolving Port Conflicts (EADDRINUSE) and Automatic Port Selection
 
@@ -62,9 +65,10 @@ npx @modelcontextprotocol/inspector \
 | `HEADERS` | JSON string containing headers for requests | `{}` |
 | `ALLOW_MUTATIONS` | Enable mutation operations (disabled by default) | `false` |
 | `NAME` | Name of the MCP server | `mcp-graphql-enhanced` |
-| `SCHEMA` | Path to a local GraphQL schema file or URL (optional) | - |
+| `SCHEMA` | Path to a local GraphQL schema file or URL | - |
 | `MCP_PORT` | Port for the HTTP/JSON-RPC server. | `6274` |
 | `ENABLE_HTTP` | Enable HTTP transport: `auto` (default), `true`, or `false` | `auto` |
+| `DEBUG` | Set to `mcp:*` for detailed SDK logs | - |
 **Note on `ENABLE_HTTP`:** 
 - `auto` (default): Automatically enables HTTP only when running in MCP Inspector...
 - `true`: Always enable HTTP server

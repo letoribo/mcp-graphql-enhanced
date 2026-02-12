@@ -1,22 +1,25 @@
 #!/usr/bin/env node
 
 import http, { IncomingMessage, ServerResponse } from "node:http";
-const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
-const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
-const { parse } = require("graphql/language");
-const z = require("zod").default;
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { parse } from "graphql/language";
+import z from "zod";
 
-const { checkDeprecatedArguments } = require("./helpers/deprecation.js");
-const {
-    introspectEndpoint,
+// Helper imports
+import { checkDeprecatedArguments } from "./helpers/deprecation.js";
+import {
     introspectLocalSchema,
-    introspectSchemaFromUrl,
     introspectSpecificTypes,
-} = require("./helpers/introspection.js");
+} from "./helpers/introspection.js";
 
 const getVersion = () => {
-    const pkg = require("../package.json");
-    return pkg.version;
+    try {
+        const pkg = require("../package.json");
+        return pkg.version;
+    } catch {
+        return "3.2.1";
+    }
 };
 
 checkDeprecatedArguments();
@@ -25,7 +28,7 @@ const EnvSchema = z.object({
     NAME: z.string().default("mcp-graphql-enhanced"),
     ENDPOINT: z.preprocess(
         (val: unknown) => (typeof val === 'string' ? val.trim() : val),
-        z.string().url("ENDPOINT must be a valid URL (e.g., https://example.com/graphql)")
+        z.string().url()
     ).default("https://mcp-neo4j-discord.vercel.app/api/graphiql"),
     ALLOW_MUTATIONS: z
         .enum(["true", "false"])
@@ -50,7 +53,7 @@ const EnvSchema = z.object({
         .enum(["true", "false", "auto"])
         .transform((value: string) => {
             if (value === "auto") {
-                return !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT);
+                return !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.MCP_PORT);
             }
             return value === "true";
         })
@@ -62,7 +65,6 @@ const env = EnvSchema.parse(process.env);
 const server = new McpServer({
     name: env.NAME,
     version: getVersion(),
-    description: `GraphQL MCP server for ${env.ENDPOINT}`,
 });
 
 // --- CACHE STATE ---
@@ -70,10 +72,6 @@ let cachedSDL: string | null = null;
 let cachedSchemaObject: any = null;
 let schemaLoadError: Error | null = null;
 
-/**
- * Loads the schema into memory. 
- * Populates both cachedSDL (string) and cachedSchemaObject (GraphQLSchema object).
- */
 async function getSchema(): Promise<string> {
     if (cachedSDL) return cachedSDL;
     if (schemaLoadError) throw schemaLoadError;
@@ -83,15 +81,16 @@ async function getSchema(): Promise<string> {
         let sdl: string;
 
         if (env.SCHEMA) {
+            // Check if it's a URL or local path
             if (env.SCHEMA.startsWith("http")) {
-                sdl = await introspectSchemaFromUrl(env.SCHEMA);
+                const response = await fetch(env.SCHEMA);
+                sdl = await response.text();
             } else {
                 sdl = await introspectLocalSchema(env.SCHEMA);
             }
             cachedSchemaObject = buildASTSchema(gqlParse(sdl));
             cachedSDL = sdl;
         } else {
-            // Live Introspection
             const response = await fetch(env.ENDPOINT, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...env.HEADERS },
@@ -113,115 +112,20 @@ async function getSchema(): Promise<string> {
     }
 }
 
-// --- RESOURCES ---
-server.resource("graphql-schema", new URL(env.ENDPOINT).href, async (uri: URL) => {
-    try {
-        const sdl = await getSchema();
-        return { contents: [{ uri: uri.href, text: sdl }] };
-    } catch (error) {
-        throw error;
-    }
-});
-
 // --- TOOL HANDLERS ---
 const toolHandlers = new Map();
 
-const introspectSchemaHandler = async ({ typeNames }: { typeNames?: string[] }) => {
-    try {
-        // Ensure cache is populated
-        await getSchema();
-
-        // Safety: If no specific types requested, return the 'Map' of types to prevent bridge crash
-        if (!typeNames || typeNames.length === 0) {
-            const allTypeNames = Object.keys(cachedSchemaObject.getTypeMap())
-                .filter(t => !t.startsWith('__'));
-
-            return {
-                content: [{
-                    type: "text",
-                    text: `Schema is large. Please request specific types for full details.\n\nAvailable types: ${allTypeNames.join(", ")}`
-                }]
-            };
-        }
-
-        // Use the new filtering logic from helpers/introspection.js
-        const filteredResult = introspectSpecificTypes(cachedSchemaObject, typeNames);
-
-        return {
-            content: [{
-                type: "text",
-                text: JSON.stringify(filteredResult, null, 2)
-            }]
-        };
-    } catch (error: any) {
-        throw new Error(`Introspection failed: ${error.message}`);
-    }
-};
-toolHandlers.set("introspect-schema", introspectSchemaHandler);
-
-server.tool(
-    "introspect-schema",
-    "Introspect the GraphQL schema. Optionally filter to specific types.",
-    {
-        typeNames: z.array(z.string()).optional().describe("A list of specific type names to filter (e.g. ['User', 'Post'])."),
-    },
-    async ({ typeNames }: { typeNames?: string[] }) => {
-        try {
-            console.error(`[TOOL] Introspect called with types: ${JSON.stringify(typeNames || "NONE")}`);
-            
-            // 1. Ensure the schema is loaded into the cache
-            await getSchema();
-
-            // 2. THE GATEKEEPER: If no types requested, send ONLY names.
-            if (!typeNames || typeNames.length === 0) {
-                const allTypeNames = Object.keys(cachedSchemaObject.getTypeMap())
-                    .filter(t => !t.startsWith('__'));
-
-                console.error(`[TOOL] Sending summary list of ${allTypeNames.length} types.`);
-                
-                return {
-                    content: [{
-                        type: "text",
-                        text: `Schema is large. Please request specific types for details.\n\nAvailable types: ${allTypeNames.join(", ")}`
-                    }]
-                };
-            }
-
-            // 3. DRILL DOWN: If Claude asks for specific types, use the helper.
-            console.error(`[TOOL] Filtering for: ${typeNames.join(", ")}`);
-            const filteredResult = introspectSpecificTypes(cachedSchemaObject, typeNames);
-
-            return {
-                content: [{
-                    type: "text",
-                    text: JSON.stringify(filteredResult, null, 2)
-                }]
-            };
-        } catch (error: any) {
-            console.error(`[TOOL ERROR] ${error.message}`);
-            throw new Error(`Introspection failed: ${error.message}`);
-        }
-    }
-);
-
-const queryGraphqlHandler = async ({ query, variables, headers }: any) => {
+// Tool: query-graphql
+const queryGraphqlHandler = async ({ query, variables, headers }: { query: string, variables?: string, headers?: string }) => {
     try {
         const parsedQuery = parse(query);
         const isMutation = parsedQuery.definitions.some(
             (def: any) => def.kind === "OperationDefinition" && def.operation === "mutation",
         );
-
-        if (isMutation && !env.ALLOW_MUTATIONS) {
-            throw new Error("Mutations are not allowed. Enable ALLOW_MUTATIONS in config.");
-        }
-    } catch (error) {
-        throw new Error(`Invalid GraphQL query: ${error}`);
-    }
-
-    try {
+        if (isMutation && !env.ALLOW_MUTATIONS) throw new Error("Mutations are not allowed.");
+        
         const toolHeaders = headers ? JSON.parse(headers) : {};
         const allHeaders = { "Content-Type": "application/json", ...env.HEADERS, ...toolHeaders };
-
         let parsedVariables = variables;
         if (typeof variables === 'string') parsedVariables = JSON.parse(variables);
 
@@ -231,138 +135,118 @@ const queryGraphqlHandler = async ({ query, variables, headers }: any) => {
             body: JSON.stringify({ query, variables: parsedVariables }),
         });
 
-        if (!response.ok) {
-            const responseText = await response.text();
-            throw new Error(`GraphQL request failed: ${response.statusText}\n${responseText}`);
-        }
-
         const data = await response.json();
-        if (data.errors && data.errors.length > 0) {
-            throw new Error(`GraphQL errors: ${JSON.stringify(data.errors, null, 2)}`);
-        }
-
-        return {
-            content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        return { 
+            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] 
         };
-    } catch (error) {
-        throw new Error(`Failed to execute GraphQL query: ${error}`);
+    } catch (error: any) {
+        throw new Error(`Execution failed: ${error.message}`);
     }
 };
-toolHandlers.set("query-graphql", queryGraphqlHandler);
 
+toolHandlers.set("query-graphql", queryGraphqlHandler);
 server.tool(
-    "query-graphql",
-    "Query a GraphQL endpoint with the given query and variables.",
+    "query-graphql", 
+    "Execute a GraphQL query against the endpoint",
     {
         query: z.string(),
         variables: z.string().optional(),
-        headers: z.string().optional().describe("Optional JSON string of headers"),
-    },
+        headers: z.string().optional(),
+    }, 
     queryGraphqlHandler
 );
 
-// --- HTTP SERVER LOGIC ---
-function readBody(req: IncomingMessage): Promise<string> {
-    return new Promise((resolve, reject) => {
-        let body = '';
-        req.on('data', chunk => body += chunk.toString());
-        req.on('end', () => resolve(body));
-        req.on('error', reject);
-    });
-}
+// Tool: introspect-schema
+const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
+    await getSchema();
+    if (!typeNames || typeNames.length === 0) {
+        const allTypeNames = Object.keys(cachedSchemaObject.getTypeMap()).filter(t => !t.startsWith('__'));
+        return { 
+            content: [{ type: "text" as const, text: `Schema is large. Available types: ${allTypeNames.join(", ")}` }] 
+        };
+    }
+    const filtered = introspectSpecificTypes(cachedSchemaObject, typeNames);
+    return { 
+        content: [{ type: "text" as const, text: JSON.stringify(filtered, null, 2) }] 
+    };
+};
 
+toolHandlers.set("introspect-schema", introspectHandler);
+server.tool(
+    "introspect-schema", 
+    "Introspect the GraphQL schema with optional type filtering",
+    {
+        typeNames: z.array(z.string()).optional(),
+    }, 
+    introspectHandler
+);
+
+
+// --- HTTP SERVER LOGIC ---
 async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-    const url = new URL(req.url as string, `http://${req.headers.host}`);
-
-    if (url.pathname === '/health' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', server: env.NAME }));
-        return;
-    }
+    const url = new URL(req.url || '', `http://${req.headers.host}`);
 
     if (url.pathname === '/mcp' && req.method === 'POST') {
-        try {
-            const rawBody = await readBody(req);
-            const { method, params, id } = JSON.parse(rawBody);
-            const handler = toolHandlers.get(method);
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', async () => {
+            try {
+                const { method, params, id } = JSON.parse(body);
+                console.error(`[HTTP-RPC] Method: ${method} | ID: ${id}`);
 
-            if (!handler) {
-                res.writeHead(404);
-                res.end(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } }));
-                return;
+                const handler = toolHandlers.get(method);
+                if (!handler) {
+                    res.writeHead(404);
+                    return res.end(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: "Method not found" } }));
+                }
+
+                const result = await handler(params);
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ jsonrpc: '2.0', id, result }));
+            } catch (e: any) {
+                console.error(`[HTTP-ERROR] ${e.message}`);
+                res.writeHead(500);
+                res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: "Internal Error" } }));
             }
-
-            const result = await handler(params);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ jsonrpc: '2.0', id, result }));
-        } catch (error) {
-            res.writeHead(500);
-            res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' } }));
-        }
+        });
         return;
+    }
+    
+    if (url.pathname === '/health') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ status: "ok", server: env.NAME }));
     }
 
     res.writeHead(404);
-    res.end('Not Found');
-}
-
-let httpServer: http.Server | null = null;
-
-async function startHttpServer(initialPort: number): Promise<number> {
-    return new Promise((resolve, reject) => {
-        let port = initialPort;
-        const server = http.createServer(handleHttpRequest);
-        server.once('error', (err: any) => {
-            if (err.code === 'EADDRINUSE') {
-                server.close();
-                resolve(startHttpServer(port + 1));
-            } else reject(err);
-        });
-        server.listen(port, () => {
-            httpServer = server;
-            resolve(port);
-        });
-    });
+    res.end("Not Found");
 }
 
 // --- STARTUP ---
 async function main() {
-    console.error(`[SCHEMA] Pre-loading GraphQL schema...`);
-    const schemaPromise = getSchema().catch(error => {
-        console.error(`[SCHEMA] Warning: Failed to pre-load schema: ${error}`);
-    });
-
-    const stdioTransport = new StdioServerTransport();
-    await server.connect(stdioTransport);
-    console.error(`[STDIO] Started GraphQL MCP server ${env.NAME}`);
-
     if (env.ENABLE_HTTP) {
-        try {
-            const port = await startHttpServer(env.MCP_PORT);
-            console.error(`[HTTP] Server started on http://localhost:${port}`);
-        } catch (error) {
-            console.error(`[HTTP] Failed to start: ${error}`);
-        }
+        const serverHttp = http.createServer(handleHttpRequest);
+        serverHttp.listen(env.MCP_PORT, () => {
+            console.error(`[HTTP] Server started on http://localhost:${env.MCP_PORT}`);
+        });
     }
 
-    await schemaPromise;
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error(`[STDIO] MCP Server "${env.NAME}" v${getVersion()} started`);
+
+    getSchema().catch(e => console.error(`[SCHEMA] Warning: Preload failed: ${e.message}`));
 }
 
-// Graceful exit
-const shutdown = () => {
-    if (httpServer) httpServer.close(() => process.exit(0));
-    else process.exit(0);
-};
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => process.exit(0));
+process.on('SIGTERM', () => process.exit(0));
 
 main().catch(error => {
-    console.error(`Fatal error: ${error}`);
+    console.error(`[FATAL] ${error}`);
     process.exit(1);
 });
