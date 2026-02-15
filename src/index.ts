@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { parse } from "graphql/language";
 import z from "zod";
+import { renderGraphiQL} from "./helpers/graphiql.js";
 
 // Helper imports
 import { checkDeprecatedArguments } from "./helpers/deprecation.js";
@@ -192,6 +193,13 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
     const url = new URL(req.url || '', `http://${req.headers.host}`);
 
+    // NEW FEATURE: Web GUI for Humans
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/graphiql')) {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        // Pass env.HEADERS to the explorer
+        return res.end(renderGraphiQL(env.ENDPOINT, env.HEADERS));
+    }
+
     if (url.pathname === '/mcp' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => { body += chunk; });
@@ -233,6 +241,8 @@ async function main() {
         const serverHttp = http.createServer(handleHttpRequest);
         serverHttp.listen(env.MCP_PORT, () => {
             console.error(`[HTTP] Server started on http://localhost:${env.MCP_PORT}`);
+            console.error(`🎨 GraphiQL IDE: http://localhost:${env.MCP_PORT}/graphiql`);
+            console.error(`🤖 MCP Endpoint: http://localhost:${env.MCP_PORT}/mcp\n`);
         });
     }
 

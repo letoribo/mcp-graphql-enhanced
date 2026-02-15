@@ -4,6 +4,7 @@ An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-
 > Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
 
 ## ✨ Key Enhancements
+* ✅ **Built-in GraphiQL IDE** — Visual playground at http://localhost:MCP_PORT/ (or /graphiql) with pre-configured headers.
 * ✅ **Dual Transport** — Supports both **STDIO** (for local CLI/client tools) and **HTTP/JSON-RPC** (for external/browser clients).
 * ✅ **Dynamic headers** — pass `Authorization`, `X-API-Key`, etc., via tool arguments (no config restarts)
 * ✅ **Robust variables parsing** — fixes `“Query variables must be a null or an object”` error
@@ -12,6 +13,11 @@ An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-
 * ✅ **Secure by default** — mutations disabled unless explicitly enabled
 
 ---
+## 🎨 Visual Command Center (GraphiQL)
+Unlike standard MCP servers, this one provides a visual interface for humans. When running with `ENABLE_HTTP=true`, you can open a full-featured **GraphiQL IDE** in your browser.
+
+* **Endpoint:** `http://localhost:6274/` (or `/graphiql`)
+* **Header Sync:** Any headers set in your environment (like GitHub tokens) are automatically injected into the GraphiQL "Headers" tab for immediate testing.
 
 ## 💻 HTTP / Dual Transport
 
@@ -21,6 +27,7 @@ This allows external systems, web applications, and direct `curl` commands to ac
 
 | **Endpoint** | **Method** | **Description** |
 | :--- | :--- | :--- |
+| `/graphiql` | `GET` | Human Interface: The visual GraphQL IDE. |
 | `/mcp` | `POST` | The main JSON-RPC 2.0 endpoint for tool execution. |
 | `/health` | `GET` | Simple health check, returns `{ status: 'ok' }`. |
 
@@ -46,21 +53,21 @@ curl http://localhost:6274/health
 # Example: Test the query tool via JSON-RPC (using port 6275 if 6274 was busy)
 curl -X POST http://localhost:6275/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"query-graphql","params":{"query":"query { __typename }"},"id":1}'
 
-## 🔍 Filtered Introspection (New!)
+## 🔍 Filtered Introspection
 Avoid 50k-line schema dumps. Ask for only what you need:
-```@introspect-schema typeNames ["Query", "User"]```
+`@introspect-schema typeNames ["Query", "User"]`
 ## 🔍 Debug & Inspect
 Use the official MCP Inspector to test your server live:
 ```bash
 npx @modelcontextprotocol/inspector \
   -e ENDPOINT=https://api.example.com/graphql \
-  npx @letoribo/mcp-graphql-enhanced --debug
+  npx @letoribo/mcp-graphql-enhanced
 ```
 ### Environment Variables (Breaking change in 1.0.0)
 > **Note:** As of version 1.0.0, command line arguments have been replaced with environment variables.
 
 | Environment Variable | Description | Default |
-|----------|-------------|---------|
+| :--- | :--- | :--- |
 | `ENDPOINT` | GraphQL endpoint URL | `https://mcp-neo4j-discord.vercel.app/api/graphiql` |
 | `HEADERS` | JSON string containing headers for requests | `{}` |
 | `ALLOW_MUTATIONS` | Enable mutation operations (disabled by default) | `false` |
@@ -93,6 +100,13 @@ npx @letoribo/mcp-graphql-enhanced
 MCP_PORT=8080 npx @letoribo/mcp-graphql-enhanced
 # Disable HTTP transport (fastest, recommended for Claude Desktop)
 ENABLE_HTTP=false npx @letoribo/mcp-graphql-enhanced
+# Test the surgical precision and the IDE immediately:
+ENDPOINT=https://api.github.com/graphql \
+HEADERS='{"Authorization":"Bearer YOUR_GITHUB_TOKEN"}' \
+ENABLE_HTTP=true \
+npx @letoribo/mcp-graphql-enhanced
+
+# Then visit http://localhost:6274/graphiql
 ```
 ### 🖥️ Claude Desktop Configuration Examples
 You can connect Claude Desktop to your GraphQL API using either the npx package (recommended for simplicity) or the Docker image (ideal for reproducibility and isolation).
