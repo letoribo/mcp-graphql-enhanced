@@ -6,6 +6,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { parse } from "graphql/language";
 import z from "zod";
 import { renderGraphiQL} from "./helpers/graphiql.js";
+import { 
+  isObjectType, 
+  getNamedType, 
+  GraphQLField,
+  GraphQLSchema
+} from "graphql";
 
 // Helper imports
 import { checkDeprecatedArguments } from "./helpers/deprecation.js";
@@ -72,49 +78,160 @@ const server = new McpServer({
 let cachedSDL: string | null = null;
 let cachedSchemaObject: any = null;
 let schemaLoadError: Error | null = null;
+let isUpdating = false;
+let updatePromise: Promise<string> | null = null;
+let lastKnownTypeCount = 0;
+let expectEmptySchema = false; // Intent flag for intentional purges
 
-async function getSchema(): Promise<string> {
-    if (cachedSDL) return cachedSDL;
+/**
+ * Smart Hybrid Schema Fetcher (Zero-Error Version)
+ * @param force If true, blocks and waits for the new schema evolution.
+ * If false, returns cache immediately and updates in background.
+ */
+async function getSchema(force: boolean = false, requestedTypes?: string[]): Promise<string> {
+    // 1. Hook into existing update if in progress
+    if (isUpdating && updatePromise) {
+        if (force || !cachedSDL) return await updatePromise;
+        return cachedSDL;
+    }
+
+    // 2. Return cache if valid and not forcing
+    if (cachedSDL && !force) {
+        // Validation check: If user wants specific types but they aren't in the cache
+        if (requestedTypes && cachedSchemaObject) {
+            const typeMap = cachedSchemaObject.getTypeMap();
+            const missing = requestedTypes.filter(t => !typeMap[t]);
+            if (missing.length > 0) {
+                // Force a refresh if requested types are missing from current cache
+                return await (updatePromise = performUpdate(true));
+            }
+        }
+        return cachedSDL;
+    }
+
+    if (force) schemaLoadError = null;
     if (schemaLoadError) throw schemaLoadError;
 
+    // 3. Trigger update
+    updatePromise = performUpdate(force);
+    
     try {
-        const { buildClientSchema, getIntrospectionQuery, printSchema, buildASTSchema, parse: gqlParse } = require("graphql");
-        let sdl: string;
+        if (force || !cachedSDL) {
+            return await updatePromise;
+        } else {
+            updatePromise.catch(err => console.error("[SCHEMA] Background update failed:", err));
+            return cachedSDL;
+        }
+    } finally {
+        // Promise reference is cleared inside performUpdate's 'finally' block
+    }
+}
 
+/**
+ * Internal logic for schema introspection and building.
+ * This version uses universal business-type tracking and provides 
+ * detailed diagnostic reports instead of generic error messages.
+ */
+async function performUpdate(force: boolean): Promise<string> {
+    isUpdating = true;
+    const startTime = Date.now();
+
+    try {
+        const { buildClientSchema, getIntrospectionQuery, printSchema, buildASTSchema, parse: gqlParse, isObjectType } = require("graphql");
+
+        let tempSchema: any;
+
+        // --- FETCHING LOGIC (Unified Source) ---
         if (env.SCHEMA) {
-            // Check if it's a URL or local path
+            let sdl: string;
             if (env.SCHEMA.startsWith("http")) {
+                // Remote SDL File: Fetch via HTTP
                 const response = await fetch(env.SCHEMA);
+                if (!response.ok) throw new Error(`Remote_SDL_Fetch_Failed: ${response.statusText}`);
                 sdl = await response.text();
             } else {
+                // Local SDL File: Use your custom helper (readFile inside)
                 sdl = await introspectLocalSchema(env.SCHEMA);
             }
-            cachedSchemaObject = buildASTSchema(gqlParse(sdl));
-            cachedSDL = sdl;
+            // Direct path: Convert raw SDL string to GraphQLSchema object
+            tempSchema = buildASTSchema(gqlParse(sdl));
         } else {
+            // Standard Path: Execute Introspection Query against live ENDPOINT
             const response = await fetch(env.ENDPOINT, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...env.HEADERS },
                 body: JSON.stringify({ query: getIntrospectionQuery() }),
             });
 
-            if (!response.ok) throw new Error(`Fetch failed: ${response.statusText}`);
-
+            if (!response.ok) throw new Error(`HTTP_${response.status}: ${response.statusText}`);
             const result = await response.json();
-            cachedSchemaObject = buildClientSchema(result.data);
-            cachedSDL = printSchema(cachedSchemaObject);
+            if (!result.data) throw new Error("Invalid GraphQL response: Missing 'data' field.");
+            
+            // Build Schema object from introspection JSON
+            tempSchema = buildClientSchema(result.data);
         }
 
-        console.error(`[SCHEMA] Successfully loaded and cached GraphQL schema`);
-        return cachedSDL!;
-    } catch (error: unknown) {
-        schemaLoadError = error instanceof Error ? error : new Error(String(error));
-        throw schemaLoadError;
+        // --- UNIFIED STRUCTURAL ANALYSIS (For AI Report) ---
+        const typeMap = tempSchema.getTypeMap();
+        
+        // Filter "Business Labels" (Nodes) while ignoring internal scalars/system types
+        const businessTypes = Object.keys(typeMap).filter(typeName => {
+            const type = typeMap[typeName];
+            return (
+                !typeName.startsWith('__') && 
+                !['Query', 'Mutation', 'Subscription'].includes(typeName) &&
+                !['String', 'Int', 'Float', 'Boolean', 'ID', 'BigInt', 'DateTime'].includes(typeName) &&
+                isObjectType(type)
+            );
+        });
+
+        // Maintain state for "Gap Analysis"
+        lastKnownTypeCount = businessTypes.length;
+        const currentSDL = printSchema(tempSchema);
+        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+        // --- CACHE & NOTIFICATION ---
+        if (currentSDL !== cachedSDL) {
+            cachedSDL = currentSDL;
+            cachedSchemaObject = tempSchema; // Store the live Schema object for tool execution
+            
+            return [
+                `✨ SCHEMA EVOLVED (${duration}s)`,
+                `📊 Source: ${env.SCHEMA ? 'Local/Remote SDL' : 'Live Endpoint'}`,
+                `🧬 Labels: ${businessTypes.join(', ') || 'None'}`,
+                `---`,
+                `The bridge has updated the graph model. New types are now queryable.`
+            ].join('\n');
+        } else {
+            return `✅ Status: Schema stable (${lastKnownTypeCount} labels).`;
+        }
+
+    } catch (error: any) {
+        // Informative error report to prevent "AI confusion"
+        return [
+            `❌ SCHEMA SYNC FAILED`,
+            `🔍 Reason: ${error.message}`,
+            `🛠️ Action: Verify your ${env.SCHEMA ? 'file path' : 'endpoint connection'} and retry.`
+        ].join('\n');
+    } finally {
+        isUpdating = false;
+        updatePromise = null;
     }
 }
 
 // --- TOOL HANDLERS ---
 const toolHandlers = new Map();
+
+/** * executionLogs stores the last 5 GraphQL operations.
+ * This allows the AI to "inspect" its own generated queries and the raw data 
+ * for debugging or bridging to 3D visualization tools.
+ */
+let executionLogs: Array<{
+    query: string;
+    variables: any;
+    response: any;
+    timestamp: string;
+}> = [];
 
 // Tool: query-graphql
 const queryGraphqlHandler = async ({ query, variables, headers }: { query: string, variables?: string, headers?: string }) => {
@@ -136,9 +253,37 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
             body: JSON.stringify({ query, variables: parsedVariables }),
         });
 
-        const data = await response.json();
+        const data = (await response.json()) as any;
+
+        // 1. Extract and sanitize Cypher if present in extensions
+        const rawCypher = data.extensions?.cypher || [];
+        const cleanCypher = rawCypher.map((c: string) => 
+            c.replace(/^CYPHER: /, '')
+             .replace(/^CYPHER 5\n/, '')
+             .replace(/\nPARAMS: \{\}$/, '')
+        );
+
+        // 2. Update execution history for internal server state
+        executionLogs.push({
+            query,
+            variables: parsedVariables,
+            response: data, 
+            timestamp: new Date().toISOString()
+        });
+        if (executionLogs.length > 5) executionLogs.shift();
+
+        // 3. Prepare optimized response for Claude
+        const responseForClaude: any = {
+            result: data.data,
+            // Only add the cypher field if there's actual data to show
+            ...(cleanCypher.length > 0 ? { cypher: cleanCypher } : {})
+        };
+
         return { 
-            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] 
+            content: [{ 
+                type: "text" as const, 
+                text: JSON.stringify(responseForClaude, null, 2) 
+            }] 
         };
     } catch (error: any) {
         throw new Error(`Execution failed: ${error.message}`);
@@ -159,14 +304,65 @@ server.tool(
 
 // Tool: introspect-schema
 const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
-    await getSchema();
+    // 1. Always pull the latest schema state
+    // The report from performUpdate is captured to show evolution details
+    const evolutionSummary = await getSchema(true);
+    
+    const schema: GraphQLSchema = cachedSchemaObject; 
+    const typeMap = schema.getTypeMap();
+
+    // 2. Generate a structural fingerprint
+    const typeKeys = Object.keys(typeMap).filter(t => !t.startsWith('__'));
+    const schemaVersion = `v${typeKeys.length}.${Math.floor(Date.now() / 10000) % 1000}`;
+
+    // --- GAP ANALYSIS: Check if requested types are actually in the map ---
+    if (typeNames && typeNames.length > 0) {
+        const missing = typeNames.filter(name => !typeMap[name]);
+        
+        if (missing.length > 0) {
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: `❌ PARTIAL RESULTS [ID: ${schemaVersion}]\n\n` +
+                          `MISSING TYPES: ${missing.join(", ")}\n` +
+                          `REASON: The database has been updated, but the GraphQL Schema is still regenerating these specific types.\n` +
+                          `ACTION: Please wait 3 seconds and retry 'introspect-schema' to see the full graph.\n\n` +
+                          `CURRENTLY AVAILABLE: ${typeKeys.filter(t => !['Query', 'Mutation', 'Report'].includes(t)).join(", ")}`
+                }]
+            };
+        }
+    }
+
     if (!typeNames || typeNames.length === 0) {
-        const allTypeNames = Object.keys(cachedSchemaObject.getTypeMap()).filter(t => !t.startsWith('__'));
+        const queryType = schema.getQueryType();
+        const discoveredEntities = new Set<string>();
+        
+        if (queryType) {
+            const queryFields: Record<string, GraphQLField<any, any>> = queryType.getFields();
+            Object.values(queryFields).forEach((field) => {
+                const namedType = getNamedType(field.type);
+                if (isObjectType(namedType) && !namedType.name.startsWith('__')) {
+                    discoveredEntities.add(namedType.name);
+                }
+            });
+        }
+
+        const coreEntities = Array.from(discoveredEntities).sort();
+
         return { 
-            content: [{ type: "text" as const, text: `Schema is large. Available types: ${allTypeNames.join(", ")}` }] 
+            content: [{ 
+                type: "text" as const, 
+                text: `${evolutionSummary}\n\n` + // Include the report from performUpdate
+                      `GraphQL Schema Manifest [ID: ${schemaVersion}]\n\n` +
+                      `ENTRY_POINT_ENTITIES: ${coreEntities.join(", ") || "None"}\n` +
+                      `TOTAL_SCHEMA_TYPES: ${typeKeys.length}\n\n` +
+                      `ALL_AVAILABLE_TYPES: ${typeKeys.join(", ")}`
+            }] 
         };
     }
-    const filtered = introspectSpecificTypes(cachedSchemaObject, typeNames);
+    
+    // 3. Detailed introspection for specific types
+    const filtered = introspectSpecificTypes(schema, typeNames);
     return { 
         content: [{ type: "text" as const, text: JSON.stringify(filtered, null, 2) }] 
     };

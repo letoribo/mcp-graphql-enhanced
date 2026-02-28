@@ -11,6 +11,19 @@ An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-
 * ✅ **Filtered introspection** — request only specific types (e.g., `typeNames: ["Query", "User"]`) to reduce LLM context noise
 * ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Cursor**, **Glama**
 * ✅ **Secure by default** — mutations disabled unless explicitly enabled
+* ✅ **Dynamic Schema Evolution** — Smart diagnostics and gap analysis for servers that regenerate GraphQL types on-the-fly (like Neo4j).
+* ✅ **Deep Observability** — Automatic Cypher extraction and cleaning from GraphQL extensions.
+
+## 🔍 Advanced Observability & Cypher
+The bridge provides deep insights into how the LLM interacts with your graph database. 
+
+### 🕸️ Automated Cypher Extraction
+For GraphQL server implementations that return query execution plans (like `@neo4j/graphql`), the bridge automatically:
+1. **Detects** `extensions.cypher` in the response.
+2. **Sanitizes** the output by stripping internal headers (like `CYPHER 5` or empty `PARAMS`).
+3. **Injects** a clean Cypher block directly into the tool's output for the AI to analyze.
+
+> **Note:** This feature requires your GraphQL server to be configured to include debug information in the response extensions.
 
 ---
 ## 🎨 Visual Command Center (GraphiQL)
