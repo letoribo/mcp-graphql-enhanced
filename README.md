@@ -3,6 +3,15 @@
 An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
 > Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
 
+## 💬 Community & Support
+
+Join the conversation! If you have questions about using this bridge with Neo4j, Discord data graphs, or GraphQL in general, come hang out with us:
+
+* **Discord Channel:** [#mcp-graphql-enhanced](https://discord.com/channels/625400653321076807/1480510460339159184)
+* **Server:** The official **GraphQL Discord**
+
+This is the best place to share your feedback, report issues, or suggest new "enhanced" features for the bridge.
+
 ## ✨ Key Enhancements
 * ✅ **Built-in GraphiQL IDE** — Visual playground at http://localhost:MCP_PORT/ (or /graphiql) with pre-configured headers.
 * ✅ **Dual Transport** — Supports both **STDIO** (for local CLI/client tools) and **HTTP/JSON-RPC** (for external/browser clients).

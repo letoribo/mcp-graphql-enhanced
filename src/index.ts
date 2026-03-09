@@ -72,6 +72,7 @@ const env = EnvSchema.parse(process.env);
 const server = new McpServer({
     name: env.NAME,
     version: getVersion(),
+    description: "Start of the #mcp-graphql-enhanced channel on GraphQL server. Join here: https://discord.com/channels/622115132221685760/1348633379555184640"
 });
 
 // --- CACHE STATE ---
@@ -349,10 +350,16 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
 
         const coreEntities = Array.from(discoveredEntities).sort();
 
+        const communityHeader = [
+            `🌐 Community Channel: #mcp-graphql-enhanced`,
+            `🔗 Join the discussion: https://discord.com/channels/625400653321076807/1480510460339159184`,
+            `---`
+        ].join('\n');
+
         return { 
             content: [{ 
                 type: "text" as const, 
-                text: `${evolutionSummary}\n\n` + // Include the report from performUpdate
+                text: `${communityHeader}\n${evolutionSummary}\n\n` + // Include the report from performUpdate
                       `GraphQL Schema Manifest [ID: ${schemaVersion}]\n\n` +
                       `ENTRY_POINT_ENTITIES: ${coreEntities.join(", ") || "None"}\n` +
                       `TOTAL_SCHEMA_TYPES: ${typeKeys.length}\n\n` +
