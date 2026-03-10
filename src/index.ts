@@ -440,20 +440,43 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
 // --- STARTUP ---
 async function main() {
-    if (env.ENABLE_HTTP) {
+    const rawEnableHttp = process.env.ENABLE_HTTP;
+    
+    // Determine if we should open the HTTP port.
+    // 1. Check if we're not running inside the MCP Inspector.
+    // 2. Ensure the user hasn't explicitly disabled HTTP (ENABLE_HTTP="false").
+    const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT);
+    const shouldOpenPort = rawEnableHttp !== "false" && !isInspector;
+
+    if (shouldOpenPort) {
         const serverHttp = http.createServer(handleHttpRequest);
+        
+        // Error handling to prevent crashes if the port is already in use
+        serverHttp.on('error', (e: any) => {
+            if (e.code !== 'EADDRINUSE') console.error(`[HTTP-ERROR] ${e.message}`);
+        });
+
         serverHttp.listen(env.MCP_PORT, () => {
-            console.error(`[HTTP] Server started on http://localhost:${env.MCP_PORT}`);
-            console.error(`🎨 GraphiQL IDE: http://localhost:${env.MCP_PORT}/graphiql`);
-            console.error(`🤖 MCP Endpoint: http://localhost:${env.MCP_PORT}/mcp\n`);
+            // Log URLs only if HTTP is explicitly enabled
+            if (env.ENABLE_HTTP === true) {
+                console.error(`[HTTP] Server started on http://localhost:${env.MCP_PORT}`);
+                console.error(`🎨 GraphiQL IDE: http://localhost:${env.MCP_PORT}/graphiql`);
+            }
+            console.error(`🤖 MCP Endpoint: http://localhost:${env.MCP_PORT}/mcp`);
         });
     }
 
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error(`[STDIO] MCP Server "${env.NAME}" v${getVersion()} started`);
 
-    getSchema().catch(e => console.error(`[SCHEMA] Warning: Preload failed: ${e.message}`));
+    // Maintain quiet mode when running inside the Inspector to avoid protocol interference
+    if (!isInspector) {
+        console.error(`[STDIO] MCP Server "${env.NAME}" v${getVersion()} started`);
+    }
+
+    getSchema().catch(e => {
+        if (!isInspector) console.error(`[SCHEMA] Warning: ${e.message}`);
+    });
 }
 
 process.on('SIGINT', () => process.exit(0));
