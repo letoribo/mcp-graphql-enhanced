@@ -220,8 +220,52 @@ async function performUpdate(force: boolean): Promise<string> {
     }
 }
 
-// --- TOOL HANDLERS ---
-const toolHandlers = new Map();
+// --- TOOL REGISTRY ---
+const toolHandlers = new Map<string, (args: any) => Promise<any>>();
+
+// This will store schemas for our dynamic HTTP 'list-tools' response
+const registeredToolsMetadata: any[] = [];
+
+/**
+ * Helper to register tools in both MCP Server and our local registry
+ * Handles both plain objects and Zod schemas
+ */
+function registerTool(
+    name: string,
+    description: string,
+    schema: any, 
+    handler: (args: any) => Promise<any>
+) {
+    // 1. Register in official MCP Server
+    server.tool(name, description, schema, handler);
+
+    // 2. Save handler for our HTTP routing
+    toolHandlers.set(name, handler);
+
+    // 3. Store metadata for dynamic Discovery
+    // We treat 'schema' as a plain object for the JSON output
+    registeredToolsMetadata.push({
+        name,
+        description,
+        inputSchema: {
+            type: "object",
+            properties: Object.fromEntries(
+                Object.entries(schema).map(([key, value]: [string, any]) => {
+                    // Detect type from Zod or default to string
+                    const typeName = value?._def?.typeName 
+                        ? value._def.typeName.replace('Zod', '').toLowerCase() 
+                        : "string";
+                    return [key, { type: typeName }];
+                })
+            ),
+            // Assume all fields in the object are required unless specified
+            required: Object.keys(schema).filter(key => {
+                const val = schema[key] as any;
+                return val?._def?.typeName !== 'ZodOptional' && !key.includes('?');
+            })
+        }
+    });
+}
 
 /** * executionLogs stores the last 5 GraphQL operations.
  * This allows the AI to "inspect" its own generated queries and the raw data 
@@ -292,14 +336,14 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
 };
 
 toolHandlers.set("query-graphql", queryGraphqlHandler);
-server.tool(
-    "query-graphql", 
+registerTool(
+    "query-graphql",
     "Execute a GraphQL query against the endpoint",
     {
         query: z.string(),
         variables: z.string().optional(),
         headers: z.string().optional(),
-    }, 
+    },
     queryGraphqlHandler
 );
 
@@ -376,64 +420,113 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
 };
 
 toolHandlers.set("introspect-schema", introspectHandler);
-server.tool(
-    "introspect-schema", 
+registerTool(
+    "introspect-schema",
     "Introspect the GraphQL schema with optional type filtering",
     {
         typeNames: z.array(z.string()).optional(),
-    }, 
+    },
     introspectHandler
 );
 
 
 // --- HTTP SERVER LOGIC ---
 async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
+    // Standard CORS headers for cross-origin compatibility
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') { 
+        res.writeHead(204); 
+        res.end(); 
+        return; 
+    }
 
     const url = new URL(req.url || '', `http://${req.headers.host}`);
 
-    // NEW FEATURE: Web GUI for Humans
+    // Serve Web GUI (GraphiQL)
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/graphiql')) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
-        // Pass env.HEADERS to the explorer
         return res.end(renderGraphiQL(env.ENDPOINT, env.HEADERS));
     }
 
+    // Process MCP JSON-RPC Endpoint
     if (url.pathname === '/mcp' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => { body += chunk; });
         req.on('end', async () => {
+            let requestId: any = null; // Defined early to be accessible in catch block
+            
             try {
-                const { method, params, id } = JSON.parse(body);
+                const request = JSON.parse(body);
+                const { method, id, params } = request;
+                requestId = id;
+                
                 console.error(`[HTTP-RPC] Method: ${method} | ID: ${id}`);
 
-                const handler = toolHandlers.get(method);
-                if (!handler) {
-                    res.writeHead(404);
-                    return res.end(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: "Method not found" } }));
+                // --- DYNAMIC DISCOVERY ---
+                if (method === "list-tools" || method === "tools/list") {
+                    // Просто отдаем то, что накопили в нашем реестре при регистрации
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ 
+                        jsonrpc: '2.0', 
+                        id: requestId, 
+                        result: { tools: registeredToolsMetadata } 
+                    }));
                 }
 
-                const result = await handler(params);
+                // --- TOOL EXECUTION (CALL) ---
+                let targetMethod = method;
+                let toolArgs = params;
+
+                // Support both direct calls and standard MCP "call-tool" structure
+                if (method === "call-tool" || method === "tools/call") {
+                    targetMethod = params.name;
+                    toolArgs = params.arguments;
+                }
+
+                const handler = toolHandlers.get(targetMethod);
+                if (!handler) {
+                    res.writeHead(404);
+                    return res.end(JSON.stringify({ 
+                        jsonrpc: '2.0', 
+                        id: requestId, 
+                        error: { code: -32601, message: `Tool ${targetMethod} not found` } 
+                    }));
+                }
+
+                // Execute the actual business logic for the tool
+                const result = await handler(toolArgs);
+                
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ jsonrpc: '2.0', id, result }));
+                res.end(JSON.stringify({ 
+                    jsonrpc: '2.0', 
+                    id: requestId, 
+                    result 
+                }));
+
             } catch (e: any) {
                 console.error(`[HTTP-ERROR] ${e.message}`);
                 res.writeHead(500);
-                res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: "Internal Error" } }));
+                res.end(JSON.stringify({ 
+                    jsonrpc: '2.0', 
+                    id: requestId,
+                    error: { code: -32603, message: e.message || "Internal Server Error" } 
+                }));
             }
         });
         return;
     }
     
+    // Health check endpoint for monitoring
     if (url.pathname === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ status: "ok", server: env.NAME }));
     }
 
+    // Default 404 for unknown paths
     res.writeHead(404);
     res.end("Not Found");
 }
