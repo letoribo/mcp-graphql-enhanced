@@ -25,7 +25,7 @@ const getVersion = () => {
         const pkg = require("../package.json");
         return pkg.version;
     } catch {
-        return "3.2.1";
+        return "3.6.0";
     }
 };
 
