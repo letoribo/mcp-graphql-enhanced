@@ -7,10 +7,10 @@ import { parse } from "graphql/language";
 import z from "zod";
 import { renderGraphiQL} from "./helpers/graphiql.js";
 import { 
-  isObjectType, 
-  getNamedType, 
-  GraphQLField,
-  GraphQLSchema
+    isObjectType, 
+    getNamedType, 
+    GraphQLField,
+    GraphQLSchema
 } from "graphql";
 
 // Helper imports
@@ -19,6 +19,8 @@ import {
     introspectLocalSchema,
     introspectSpecificTypes,
 } from "./helpers/introspection.js";
+import { registerTool } from "./helpers/tool-registry.js";
+import { registerPrompt } from "./helpers/prompt-registry.js";
 
 const getVersion = () => {
     try {
@@ -73,6 +75,11 @@ const server = new McpServer({
     name: env.NAME,
     version: getVersion(),
     description: "Start of the #mcp-graphql-enhanced channel on GraphQL server. Join here: https://discord.com/channels/622115132221685760/1348633379555184640"
+}, {
+    capabilities: {
+        prompts: {},
+        tools: {}
+    }
 });
 
 // --- CACHE STATE ---
@@ -226,47 +233,6 @@ const toolHandlers = new Map<string, (args: any) => Promise<any>>();
 // This will store schemas for our dynamic HTTP 'list-tools' response
 const registeredToolsMetadata: any[] = [];
 
-/**
- * Helper to register tools in both MCP Server and our local registry
- * Handles both plain objects and Zod schemas
- */
-function registerTool(
-    name: string,
-    description: string,
-    schema: any, 
-    handler: (args: any) => Promise<any>
-) {
-    // 1. Register in official MCP Server
-    server.tool(name, description, schema, handler);
-
-    // 2. Save handler for our HTTP routing
-    toolHandlers.set(name, handler);
-
-    // 3. Store metadata for dynamic Discovery
-    // We treat 'schema' as a plain object for the JSON output
-    registeredToolsMetadata.push({
-        name,
-        description,
-        inputSchema: {
-            type: "object",
-            properties: Object.fromEntries(
-                Object.entries(schema).map(([key, value]: [string, any]) => {
-                    // Detect type from Zod or default to string
-                    const typeName = value?._def?.typeName 
-                        ? value._def.typeName.replace('Zod', '').toLowerCase() 
-                        : "string";
-                    return [key, { type: typeName }];
-                })
-            ),
-            // Assume all fields in the object are required unless specified
-            required: Object.keys(schema).filter(key => {
-                const val = schema[key] as any;
-                return val?._def?.typeName !== 'ZodOptional' && !key.includes('?');
-            })
-        }
-    });
-}
-
 /** * executionLogs stores the last 5 GraphQL operations.
  * This allows the AI to "inspect" its own generated queries and the raw data 
  * for debugging or bridging to 3D visualization tools.
@@ -337,6 +303,9 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
 
 toolHandlers.set("query-graphql", queryGraphqlHandler);
 registerTool(
+    server,
+    toolHandlers,
+    registeredToolsMetadata,
     "query-graphql",
     "Execute a GraphQL query against the endpoint",
     {
@@ -421,6 +390,9 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
 
 toolHandlers.set("introspect-schema", introspectHandler);
 registerTool(
+    server,
+    toolHandlers,
+    registeredToolsMetadata,
     "introspect-schema",
     "Introspect the GraphQL schema with optional type filtering",
     {
@@ -429,6 +401,30 @@ registerTool(
     introspectHandler
 );
 
+// --- PROMPTS (The "Add from ..." buttons in Claude UI) ---
+// 1. Connection check
+registerPrompt(
+  server,
+  "health-check",
+  "Check if the GraphQL endpoint is alive",
+  "Run 'query-graphql' with query '{ __typename }' to verify connection."
+);
+
+// 2. High-level overview
+registerPrompt(
+  server,
+  "schema-overview",
+  "List all available types",
+  "Run 'introspect-schema' to see all types and entry points."
+);
+
+// 3. Data types analysis
+registerPrompt(
+  server,
+  "list-scalars",
+  "List all scalar types",
+  "Run 'introspect-schema' and identify all scalars in the schema."
+);
 
 // --- HTTP SERVER LOGIC ---
 async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
@@ -446,10 +442,17 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
     const url = new URL(req.url || '', `http://${req.headers.host}`);
 
-    // Serve Web GUI (GraphiQL)
+    // Serve Web GUI (GraphiQL) - ONLY if explicitly enabled
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/graphiql')) {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        return res.end(renderGraphiQL(env.ENDPOINT, env.HEADERS));
+        // Check our explicit flag
+        if (process.env.ENABLE_HTTP === 'true') {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            return res.end(renderGraphiQL(env.ENDPOINT, env.HEADERS));
+        } else {
+            // Forbidden if not explicitly enabled
+            res.writeHead(403, { 'Content-Type': 'text/plain' });
+            return res.end("Forbidden: GraphiQL UI is disabled. Start with ENABLE_HTTP=true to use it.");
+        }
     }
 
     // Process MCP JSON-RPC Endpoint
@@ -468,7 +471,6 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
                 // --- DYNAMIC DISCOVERY ---
                 if (method === "list-tools" || method === "tools/list") {
-                    // Просто отдаем то, что накопили в нашем реестре при регистрации
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ 
                         jsonrpc: '2.0', 
@@ -533,43 +535,35 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
 // --- STARTUP ---
 async function main() {
-    const rawEnableHttp = process.env.ENABLE_HTTP;
-    
-    // Determine if we should open the HTTP port.
-    // 1. Check if we're not running inside the MCP Inspector.
-    // 2. Ensure the user hasn't explicitly disabled HTTP (ENABLE_HTTP="false").
     const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT);
-    const shouldOpenPort = rawEnableHttp !== "false" && !isInspector;
+    const isHttpExplicitlyEnabled = process.env.ENABLE_HTTP === "true";
 
-    if (shouldOpenPort) {
+    // Open HTTP port by default for MCP SSE, unless explicitly disabled
+    if (process.env.ENABLE_HTTP !== "false" && !isInspector) {
         const serverHttp = http.createServer(handleHttpRequest);
         
-        // Error handling to prevent crashes if the port is already in use
         serverHttp.on('error', (e: any) => {
-            if (e.code !== 'EADDRINUSE') console.error(`[HTTP-ERROR] ${e.message}`);
+            if (e.code === 'EADDRINUSE') {
+                console.error(`[HTTP-ERROR] Port ${env.MCP_PORT} is busy.`);
+            }
         });
 
         serverHttp.listen(env.MCP_PORT, () => {
-            // Log URLs only if HTTP is explicitly enabled
-            if (env.ENABLE_HTTP === true) {
-                console.error(`[HTTP] Server started on http://localhost:${env.MCP_PORT}`);
-                console.error(`🎨 GraphiQL IDE: http://localhost:${env.MCP_PORT}/graphiql`);
+            // All-in-one status report
+            console.error(`[SYSTEM] Server "${env.NAME}" v${getVersion()} active`);
+            console.error(`🤖 MCP SSE: http://localhost:${env.MCP_PORT}/mcp`);
+
+            // Show UI only if explicitly requested
+            if (isHttpExplicitlyEnabled) {
+                console.error(`🎨 GraphiQL UI: http://localhost:${env.MCP_PORT}/graphiql`);
             }
-            console.error(`🤖 MCP Endpoint: http://localhost:${env.MCP_PORT}/mcp`);
         });
     }
 
     const transport = new StdioServerTransport();
     await server.connect(transport);
 
-    // Maintain quiet mode when running inside the Inspector to avoid protocol interference
-    if (!isInspector) {
-        console.error(`[STDIO] MCP Server "${env.NAME}" v${getVersion()} started`);
-    }
-
-    getSchema().catch(e => {
-        if (!isInspector) console.error(`[SCHEMA] Warning: ${e.message}`);
-    });
+    getSchema().catch(() => {});
 }
 
 process.on('SIGINT', () => process.exit(0));
