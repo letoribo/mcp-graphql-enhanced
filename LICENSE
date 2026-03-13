@@ -1,7 +1,7 @@
 MIT License
 
-Copyright (c) 2024 Boris Besemer (Original Work)
-Copyright (c) 2025-2026 [letoribo] (Enhanced Architecture, NPM Refactoring & Discord Graph Infrastructure)
+Copyright (c) 2024 Boris Besemer
+Copyright (c) 2025-2026 letoribo
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,18 +20,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-PROJECT EVOLUTION & SOVEREIGNTY NOTE:
-As of mid-2025, this project has undergone a fundamental architectural shift. 
-The legacy Bun-based implementation has been decommissioned and replaced with 
-a surgical, production-ready NPM/Node.js core for maximum stability.
-
-This "Enhanced" version was battle-tested as the architectural engine for the 
-"Neo4j Discord-as-a-Database" project (mcp-neo4j-discord.vercel.app), handling 
-large-scale graph datasets. 
-
-While active real-time data ingestion is currently throttled due to persistent 
-infrastructure challenges and blackouts in Odesa, the codebase remains the 
-sovereign standard for high-performance GraphRAG, 3D visualization interface, 
-and resilient AI intent parsing. Developed under pressure in Odesa, Ukraine.
