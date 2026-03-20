@@ -89,7 +89,6 @@ let schemaLoadError: Error | null = null;
 let isUpdating = false;
 let updatePromise: Promise<string> | null = null;
 let lastKnownTypeCount = 0;
-let expectEmptySchema = false; // Intent flag for intentional purges
 
 /**
  * Smart Hybrid Schema Fetcher (Zero-Error Version)
@@ -125,13 +124,12 @@ async function getSchema(force: boolean = false, requestedTypes?: string[]): Pro
     
     try {
         if (force || !cachedSDL) {
-            return await updatePromise;
-        } else {
-            updatePromise.catch(err => console.error("[SCHEMA] Background update failed:", err));
-            return cachedSDL;
+            await updatePromise; // Wait for update to complete
+            return cachedSchemaObject;
         }
+        return cachedSchemaObject;
     } finally {
-        // Promise reference is cleared inside performUpdate's 'finally' block
+        updatePromise = null;
     }
 }
 
@@ -196,12 +194,14 @@ async function performUpdate(force: boolean): Promise<string> {
         // Maintain state for "Gap Analysis"
         lastKnownTypeCount = businessTypes.length;
         const currentSDL = printSchema(tempSchema);
-        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
         // --- CACHE & NOTIFICATION ---
+        // Always update the live object if we successfully built it
+        cachedSchemaObject = tempSchema; 
+
         if (currentSDL !== cachedSDL) {
             cachedSDL = currentSDL;
-            cachedSchemaObject = tempSchema; // Store the live Schema object for tool execution
+            const duration = ((Date.now() - startTime) / 1000).toFixed(2);
             
             return [
                 `✨ SCHEMA EVOLVED (${duration}s)`,
@@ -211,6 +211,7 @@ async function performUpdate(force: boolean): Promise<string> {
                 `The bridge has updated the graph model. New types are now queryable.`
             ].join('\n');
         } else {
+            // Even if SDL string is the same, we've ensured cachedSchemaObject is set above
             return `✅ Status: Schema stable (${lastKnownTypeCount} labels).`;
         }
 
@@ -317,42 +318,61 @@ registerTool(
 );
 
 // Tool: introspect-schema
+// --- TOOL: introspect-schema ---
 const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
-    // 1. Always pull the latest schema state
-    // The report from performUpdate is captured to show evolution details
-    const evolutionSummary = await getSchema(true);
-    
-    const schema: GraphQLSchema = cachedSchemaObject; 
+    // 1. Fetch the schema directly
+    const result = await getSchema(true); 
+
+    // Explicitly check if the result is an error string or null
+    if (!result || typeof result === 'string') {
+        return {
+            content: [{
+                type: "text" as const,
+                text: `❌ SCHEMA_ERROR: ${typeof result === 'string' ? result : 'GraphQL schema is not initialized yet.'}\n` +
+                      `ACTION: Please wait 5-10 seconds for the Neo4j endpoint to respond.`
+            }]
+        };
+    }
+
+    // TYPE FIX: Cast to GraphQLSchema so TS knows methods like getTypeMap exist
+    const schema = result as GraphQLSchema;
     const typeMap = schema.getTypeMap();
+    const mutationType = schema.getMutationType();
+    const mutationFields = mutationType ? mutationType.getFields() : {};
 
-    // 2. Generate a structural fingerprint
-    const typeKeys = Object.keys(typeMap).filter(t => !t.startsWith('__'));
-    const schemaVersion = `v${typeKeys.length}.${Math.floor(Date.now() / 10000) % 1000}`;
-
-    // --- GAP ANALYSIS: Check if requested types are actually in the map ---
+    // --- GAP ANALYSIS ---
     if (typeNames && typeNames.length > 0) {
-        const missing = typeNames.filter(name => !typeMap[name]);
+        const missing = typeNames.filter(name => {
+            const existsAsType = !!typeMap[name];
+            const existsAsMutation = !!mutationFields[name];
+            return !existsAsType && !existsAsMutation;
+        });
         
         if (missing.length > 0) {
+            const typeKeys = Object.keys(typeMap).filter(t => !t.startsWith('__'));
+            const schemaVersion = `v${typeKeys.length}.${Math.floor(Date.now() / 10000) % 1000}`;
+
             return {
                 content: [{
                     type: "text" as const,
                     text: `❌ PARTIAL RESULTS [ID: ${schemaVersion}]\n\n` +
-                          `MISSING TYPES: ${missing.join(", ")}\n` +
-                          `REASON: The database has been updated, but the GraphQL Schema is still regenerating these specific types.\n` +
-                          `ACTION: Please wait 3 seconds and retry 'introspect-schema' to see the full graph.\n\n` +
-                          `CURRENTLY AVAILABLE: ${typeKeys.filter(t => !['Query', 'Mutation', 'Report'].includes(t)).join(", ")}`
+                          `MISSING ENTITIES: ${missing.join(", ")}\n` +
+                          `REASON: These specific types or mutations were not found in the current schema map.\n` +
+                          `ACTION: Ensure the names match your Neo4j labels exactly.\n\n` +
+                          `AVAILABLE_ENTITIES: ${typeKeys.filter(t => !['Query', 'Mutation', 'Report'].includes(t)).join(", ")}`
                 }]
             };
         }
     }
 
+    // 2. Generate General Manifest
     if (!typeNames || typeNames.length === 0) {
         const queryType = schema.getQueryType();
         const discoveredEntities = new Set<string>();
         
         if (queryType) {
-            const queryFields: Record<string, GraphQLField<any, any>> = queryType.getFields();
+            // TYPE FIX: Cast fields to Record<string, GraphQLField<any, any>>
+            const queryFields = queryType.getFields() as Record<string, GraphQLField<any, any>>;
             Object.values(queryFields).forEach((field) => {
                 const namedType = getNamedType(field.type);
                 if (isObjectType(namedType) && !namedType.name.startsWith('__')) {
@@ -362,18 +382,13 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
         }
 
         const coreEntities = Array.from(discoveredEntities).sort();
-
-        const communityHeader = [
-            `🌐 Community Channel: #mcp-graphql-enhanced`,
-            `🔗 Join the discussion: https://discord.com/channels/625400653321076807/1480510460339159184`,
-            `---`
-        ].join('\n');
+        const typeKeys = Object.keys(typeMap).filter(t => !t.startsWith('__'));
+        const schemaVersion = `v${typeKeys.length}.${Math.floor(Date.now() / 10000) % 1000}`;
 
         return { 
             content: [{ 
                 type: "text" as const, 
-                text: `${communityHeader}\n${evolutionSummary}\n\n` + // Include the report from performUpdate
-                      `GraphQL Schema Manifest [ID: ${schemaVersion}]\n\n` +
+                text: `GraphQL Schema Manifest [ID: ${schemaVersion}]\n\n` +
                       `ENTRY_POINT_ENTITIES: ${coreEntities.join(", ") || "None"}\n` +
                       `TOTAL_SCHEMA_TYPES: ${typeKeys.length}\n\n` +
                       `ALL_AVAILABLE_TYPES: ${typeKeys.join(", ")}`
@@ -381,7 +396,7 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
         };
     }
     
-    // 3. Detailed introspection for specific types
+    // 3. Detailed introspection
     const filtered = introspectSpecificTypes(schema, typeNames);
     return { 
         content: [{ type: "text" as const, text: JSON.stringify(filtered, null, 2) }] 
