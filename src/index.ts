@@ -317,63 +317,80 @@ registerTool(
     queryGraphqlHandler
 );
 
-// Tool: introspect-schema
-// --- TOOL: introspect-schema ---
+/**
+ * Tool: introspect-schema
+ * Main handler for the introspection tool. 
+ * Implements "Agent Recovery" logic to guide the LLM when entities are missing.
+ */
 const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
-    // 1. Fetch the schema directly
+    // 1. Fetch the schema directly from the source
     const result = await getSchema(true); 
 
-    // Explicitly check if the result is an error string or null
+    // Explicitly check if the result is a valid GraphQLSchema object
     if (!result || typeof result === 'string') {
         return {
             content: [{
                 type: "text" as const,
                 text: `❌ SCHEMA_ERROR: ${typeof result === 'string' ? result : 'GraphQL schema is not initialized yet.'}\n` +
-                      `ACTION: Please wait 5-10 seconds for the Neo4j endpoint to respond.`
+                      `ACTION: Please wait 5-10 seconds for the backend endpoint to respond.`
             }]
         };
     }
 
-    // TYPE FIX: Cast to GraphQLSchema so TS knows methods like getTypeMap exist
+    // --- 1. INITIALIZE MAPPINGS ---
     const schema = result as GraphQLSchema;
     const typeMap = schema.getTypeMap();
+    
+    // Cache Root Type fields for rapid gap analysis
+    const queryType = schema.getQueryType();
+    const queryFields = queryType ? queryType.getFields() : {};
     const mutationType = schema.getMutationType();
     const mutationFields = mutationType ? mutationType.getFields() : {};
 
-    // --- GAP ANALYSIS ---
+    // --- 2. GAP ANALYSIS & SELF-HEALING LOOP ---
+    // If specific types were requested, verify their existence in the current schema
     if (typeNames && typeNames.length > 0) {
         const missing = typeNames.filter(name => {
             const existsAsType = !!typeMap[name];
             const existsAsMutation = !!mutationFields[name];
-            return !existsAsType && !existsAsMutation;
+            const existsAsQueryField = !!queryFields[name]; 
+            
+            return !existsAsType && !existsAsMutation && !existsAsQueryField;
         });
         
+        // If some requested entities are missing, provide the agent with a recovery map
         if (missing.length > 0) {
-            const typeKeys = Object.keys(typeMap).filter(t => !t.startsWith('__'));
-            const schemaVersion = `v${typeKeys.length}.${Math.floor(Date.now() / 10000) % 1000}`;
+            // Filter out internal GraphQL types to reduce noise for the agent
+            const internalTypes = ['Query', 'Mutation', 'Subscription'];
+            const availableEntities = Object.keys(typeMap).filter(
+                t => !t.startsWith('__') && !internalTypes.includes(t)
+            );
+            
+            // Generate a pseudo-version ID based on schema state and time
+            const schemaVersion = `v${availableEntities.length}.${Math.floor(Date.now() / 10000) % 1000}`;
 
             return {
                 content: [{
                     type: "text" as const,
-                    text: `❌ PARTIAL RESULTS [ID: ${schemaVersion}]\n\n` +
+                    text: `❌ PARTIAL RESULTS [Schema ID: ${schemaVersion}]\n\n` +
                           `MISSING ENTITIES: ${missing.join(", ")}\n` +
-                          `REASON: These specific types or mutations were not found in the current schema map.\n` +
-                          `ACTION: Ensure the names match your Neo4j labels exactly.\n\n` +
-                          `AVAILABLE_ENTITIES: ${typeKeys.filter(t => !['Query', 'Mutation', 'Report'].includes(t)).join(", ")}`
+                          `REASON: These specific types or fields were not found in the current schema.\n` +
+                          `ACTION: Re-examine the available entities below and correct your query intent.\n\n` +
+                          `AVAILABLE_ENTITIES: ${availableEntities.join(", ")}`
                 }]
             };
         }
     }
 
-    // 2. Generate General Manifest
+    // --- 3. GENERAL MANIFEST GENERATION ---
+    // If no typeNames provided, return a high-level overview of the entry points
     if (!typeNames || typeNames.length === 0) {
-        const queryType = schema.getQueryType();
         const discoveredEntities = new Set<string>();
         
         if (queryType) {
-            // TYPE FIX: Cast fields to Record<string, GraphQLField<any, any>>
-            const queryFields = queryType.getFields() as Record<string, GraphQLField<any, any>>;
-            Object.values(queryFields).forEach((field) => {
+            // Map Query fields to their underlying Object Types
+            const fields = queryType.getFields() as Record<string, GraphQLField<any, any>>;
+            Object.values(fields).forEach((field) => {
                 const namedType = getNamedType(field.type);
                 if (isObjectType(namedType) && !namedType.name.startsWith('__')) {
                     discoveredEntities.add(namedType.name);
@@ -381,22 +398,23 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
             });
         }
 
-        const coreEntities = Array.from(discoveredEntities).sort();
-        const typeKeys = Object.keys(typeMap).filter(t => !t.startsWith('__'));
-        const schemaVersion = `v${typeKeys.length}.${Math.floor(Date.now() / 10000) % 1000}`;
+        const entryPoints = Array.from(discoveredEntities).sort();
+        const allTypes = Object.keys(typeMap).filter(t => !t.startsWith('__'));
+        const schemaVersion = `v${allTypes.length}.${Math.floor(Date.now() / 10000) % 1000}`;
 
         return { 
             content: [{ 
                 type: "text" as const, 
                 text: `GraphQL Schema Manifest [ID: ${schemaVersion}]\n\n` +
-                      `ENTRY_POINT_ENTITIES: ${coreEntities.join(", ") || "None"}\n` +
-                      `TOTAL_SCHEMA_TYPES: ${typeKeys.length}\n\n` +
-                      `ALL_AVAILABLE_TYPES: ${typeKeys.join(", ")}`
+                      `ENTRY_POINT_ENTITIES: ${entryPoints.join(", ") || "None"}\n` +
+                      `TOTAL_SCHEMA_TYPES: ${allTypes.length}\n\n` +
+                      `ALL_AVAILABLE_TYPES: ${allTypes.join(", ")}`
             }] 
         };
     }
     
-    // 3. Detailed introspection
+    // --- 4. DETAILED INTROSPECTION ---
+    // Return filtered schema metadata for the requested types or root fields
     const filtered = introspectSpecificTypes(schema, typeNames);
     return { 
         content: [{ type: "text" as const, text: JSON.stringify(filtered, null, 2) }] 

@@ -44,13 +44,44 @@ export async function introspectLocalSchema(path: string) {
 }
 
 /**
- * Extract and filter specific types from a schema object.
- * Prevents "No result received" errors by only sending requested parts of the graph.
+ * Extract and filter specific types or root fields from a GraphQL schema.
+ * This prevents "No result received" errors by only sending the requested 
+ * parts of the graph to the agent, maintaining a stable context window.
  */
+
 export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string[]) {
   const result: Record<string, any> = {};
+  
+  // Cache root field maps to avoid repeated lookups during the loop
+  const queryType = schema.getQueryType();
+  const queryFields = queryType ? queryType.getFields() : {};
+  const mutationType = schema.getMutationType();
+  const mutationFields = mutationType ? mutationType.getFields() : {};
 
   for (const name of typeNames) {
+    // --- ROOT FIELD RESOLUTION ---
+    // Check if the name refers to a root field (Query or Mutation) 
+    // rather than a named Type.
+    const rootField = queryFields[name] || mutationFields[name];
+    
+    if (rootField) {
+      result[name] = {
+        kind: queryFields[name] ? "QUERY_FIELD" : "MUTATION_FIELD",
+        description: rootField.description,
+        type: rootField.type.toString(),
+        args: rootField.args
+          .filter(arg => !arg.deprecationReason)
+          .map(arg => ({
+            name: arg.name,
+            type: arg.type.toString(),
+            description: arg.description,
+          }))
+      };
+      continue; // Field found, move to next requested name
+    }
+
+    // --- NAMED TYPE RESOLUTION ---
+    // Fallback to standard type introspection if no root field matches
     const type = schema.getType(name);
     if (!type) continue;
 
