@@ -22,6 +22,9 @@ import {
 import { registerTool } from "./helpers/tool-registry.js";
 import { registerPrompt } from "./helpers/prompt-registry.js";
 
+/**
+ * Retrieves the current version from package.json
+ */
 const getVersion = () => {
     try {
         const pkg = require("../package.json");
@@ -33,11 +36,20 @@ const getVersion = () => {
 
 checkDeprecatedArguments();
 
+/**
+ * Environment configuration schema
+ */
 const EnvSchema = z.object({
     NAME: z.string().default("mcp-graphql-enhanced"),
     ENDPOINT: z.preprocess(
-        (val: unknown) => (typeof val === 'string' ? val.trim() : val),
-        z.string().url()
+        (val: unknown) => {
+            if (typeof val === 'string') {
+                // Support for multiple endpoints via comma-separated string
+                return val.trim();
+            }
+            return val;
+        },
+        z.string().min(1) 
     ).default("https://mcp-neo4j-discord.vercel.app/api/graphiql"),
     ALLOW_MUTATIONS: z
         .enum(["true", "false"])
@@ -74,7 +86,7 @@ const env = EnvSchema.parse(process.env);
 const server = new McpServer({
     name: env.NAME,
     version: getVersion(),
-    description: "Start of the #mcp-graphql-enhanced channel on GraphQL server. Join here: https://discord.com/channels/622115132221685760/1348633379555184640"
+    description: "Unified GraphQL-to-MCP bridge with dynamic schema support."
 }, {
     capabilities: {
         prompts: {},
@@ -91,7 +103,7 @@ let updatePromise: Promise<string> | null = null;
 let lastKnownTypeCount = 0;
 
 /**
- * Smart Hybrid Schema Fetcher (Zero-Error Version)
+ * Smart Hybrid Schema Fetcher
  * @param force If true, blocks and waits for the new schema evolution.
  * If false, returns cache immediately and updates in background.
  */
@@ -104,12 +116,12 @@ async function getSchema(force: boolean = false, requestedTypes?: string[]): Pro
 
     // 2. Return cache if valid and not forcing
     if (cachedSDL && !force) {
-        // Validation check: If user wants specific types but they aren't in the cache
+        // Validation check: ensure requested types exist in current cache
         if (requestedTypes && cachedSchemaObject) {
             const typeMap = cachedSchemaObject.getTypeMap();
             const missing = requestedTypes.filter(t => !typeMap[t]);
             if (missing.length > 0) {
-                // Force a refresh if requested types are missing from current cache
+                // Force a refresh if requested types are missing
                 return await (updatePromise = performUpdate(true));
             }
         }
@@ -135,8 +147,7 @@ async function getSchema(force: boolean = false, requestedTypes?: string[]): Pro
 
 /**
  * Internal logic for schema introspection and building.
- * This version uses universal business-type tracking and provides 
- * detailed diagnostic reports instead of generic error messages.
+ * Optimized for Multi-Endpoint Broadcast: Uses the first available URL for discovery.
  */
 async function performUpdate(force: boolean): Promise<string> {
     isUpdating = true;
@@ -147,40 +158,43 @@ async function performUpdate(force: boolean): Promise<string> {
 
         let tempSchema: any;
 
-        // --- FETCHING LOGIC (Unified Source) ---
+        // --- FETCHING LOGIC ---
         if (env.SCHEMA) {
             let sdl: string;
             if (env.SCHEMA.startsWith("http")) {
-                // Remote SDL File: Fetch via HTTP
+                // Remote SDL File
                 const response = await fetch(env.SCHEMA);
                 if (!response.ok) throw new Error(`Remote_SDL_Fetch_Failed: ${response.statusText}`);
                 sdl = await response.text();
             } else {
-                // Local SDL File: Use your custom helper (readFile inside)
+                // Local SDL File via helper
                 sdl = await introspectLocalSchema(env.SCHEMA);
             }
-            // Direct path: Convert raw SDL string to GraphQLSchema object
             tempSchema = buildASTSchema(gqlParse(sdl));
         } else {
-            // Standard Path: Execute Introspection Query against live ENDPOINT
-            const response = await fetch(env.ENDPOINT, {
+            // --- BROADCAST ADAPTATION ---
+            // Extract the primary endpoint for introspection
+            const endpoints = env.ENDPOINT.split(',').map(url => url.trim());
+            const primaryEndpoint = endpoints[0];
+
+            // Execute Introspection against the primary target
+            const response = await fetch(primaryEndpoint, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...env.HEADERS },
                 body: JSON.stringify({ query: getIntrospectionQuery() }),
             });
 
-            if (!response.ok) throw new Error(`HTTP_${response.status}: ${response.statusText}`);
+            if (!response.ok) throw new Error(`HTTP_${response.status} at ${primaryEndpoint}: ${response.statusText}`);
             const result = await response.json();
             if (!result.data) throw new Error("Invalid GraphQL response: Missing 'data' field.");
             
-            // Build Schema object from introspection JSON
             tempSchema = buildClientSchema(result.data);
         }
 
-        // --- UNIFIED STRUCTURAL ANALYSIS (For AI Report) ---
+        // --- UNIFIED STRUCTURAL ANALYSIS ---
         const typeMap = tempSchema.getTypeMap();
         
-        // Filter "Business Labels" (Nodes) while ignoring internal scalars/system types
+        // Filter domain types while ignoring internal system scalars and types
         const businessTypes = Object.keys(typeMap).filter(typeName => {
             const type = typeMap[typeName];
             return (
@@ -191,36 +205,33 @@ async function performUpdate(force: boolean): Promise<string> {
             );
         });
 
-        // Maintain state for "Gap Analysis"
         lastKnownTypeCount = businessTypes.length;
         const currentSDL = printSchema(tempSchema);
 
-        // --- CACHE & NOTIFICATION ---
-        // Always update the live object if we successfully built it
+        // Always update the live object upon successful build
         cachedSchemaObject = tempSchema; 
 
         if (currentSDL !== cachedSDL) {
             cachedSDL = currentSDL;
             const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+            const endpointLabel = env.SCHEMA ? 'Local/Remote SDL' : `Live Broadcast Node (${env.ENDPOINT.split(',').length} targets)`;
             
             return [
                 `✨ SCHEMA EVOLVED (${duration}s)`,
-                `📊 Source: ${env.SCHEMA ? 'Local/Remote SDL' : 'Live Endpoint'}`,
+                `📊 Source: ${endpointLabel}`,
                 `🧬 Labels: ${businessTypes.join(', ') || 'None'}`,
                 `---`,
                 `The bridge has updated the graph model. New types are now queryable.`
             ].join('\n');
         } else {
-            // Even if SDL string is the same, we've ensured cachedSchemaObject is set above
             return `✅ Status: Schema stable (${lastKnownTypeCount} labels).`;
         }
 
     } catch (error: any) {
-        // Informative error report to prevent "AI confusion"
         return [
             `❌ SCHEMA SYNC FAILED`,
             `🔍 Reason: ${error.message}`,
-            `🛠️ Action: Verify your ${env.SCHEMA ? 'file path' : 'endpoint connection'} and retry.`
+            `🛠️ Action: Verify your connection and retry.`
         ].join('\n');
     } finally {
         isUpdating = false;
@@ -230,13 +241,10 @@ async function performUpdate(force: boolean): Promise<string> {
 
 // --- TOOL REGISTRY ---
 const toolHandlers = new Map<string, (args: any) => Promise<any>>();
-
-// This will store schemas for our dynamic HTTP 'list-tools' response
 const registeredToolsMetadata: any[] = [];
 
-/** * executionLogs stores the last 5 GraphQL operations.
- * This allows the AI to "inspect" its own generated queries and the raw data 
- * for debugging or bridging to 3D visualization tools.
+/** 
+ * History buffer for the last 5 operations to support debugging and visualization.
  */
 let executionLogs: Array<{
     query: string;
@@ -245,50 +253,92 @@ let executionLogs: Array<{
     timestamp: string;
 }> = [];
 
-// Tool: query-graphql
+/**
+ * Tool: query-graphql
+ * Handles query broadcast and execution across multiple endpoints.
+ */
 const queryGraphqlHandler = async ({ query, variables, headers }: { query: string, variables?: string, headers?: string }) => {
     try {
         const parsedQuery = parse(query);
         const isMutation = parsedQuery.definitions.some(
             (def: any) => def.kind === "OperationDefinition" && def.operation === "mutation",
         );
-        if (isMutation && !env.ALLOW_MUTATIONS) throw new Error("Mutations are not allowed.");
+        
+        if (isMutation && !env.ALLOW_MUTATIONS) {
+            throw new Error("Mutations are not allowed.");
+        }
         
         const toolHeaders = headers ? JSON.parse(headers) : {};
         const allHeaders = { "Content-Type": "application/json", ...env.HEADERS, ...toolHeaders };
         let parsedVariables = variables;
         if (typeof variables === 'string') parsedVariables = JSON.parse(variables);
 
-        const response = await fetch(env.ENDPOINT, {
-            method: "POST",
-            headers: allHeaders,
-            body: JSON.stringify({ query, variables: parsedVariables }),
-        });
+        // Split multiple endpoints for broadcast
+        const endpoints = env.ENDPOINT.split(',').map(url => url.trim());
 
-        const data = (await response.json()) as any;
+        // Execute parallel requests to all targets
+        const settleResults = await Promise.allSettled(
+            endpoints.map(async (url) => { 
+                console.error(`[QUERY] Sending to ${url}`);
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: allHeaders,
+                    body: JSON.stringify({ query, variables: parsedVariables }),
+                    signal: AbortSignal.timeout(5000) // 5s timeout protection
+                });
 
-        // 1. Extract and sanitize Cypher if present in extensions
-        const rawCypher = data.extensions?.cypher || [];
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status} from ${url}`);
+                }
+
+                return {
+                    url,
+                    data: await response.json()
+                };
+            })
+        );
+
+        const successfulResponses = settleResults
+            .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+            .map(r => r.value);
+
+        const failedResponses = settleResults
+            .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+            .map(r => r.reason.message || r.reason);
+
+        if (successfulResponses.length === 0) {
+            throw new Error(`All endpoints failed: ${failedResponses.join('; ')}`);
+        }
+
+        const primaryData = successfulResponses[0].data;
+
+        // 1. Extract and sanitize Cypher from the primary response
+        const rawCypher = primaryData.extensions?.cypher || [];
         const cleanCypher = rawCypher.map((c: string) => 
             c.replace(/^CYPHER: /, '')
              .replace(/^CYPHER 5\n/, '')
              .replace(/\nPARAMS: \{\}$/, '')
         );
 
-        // 2. Update execution history for internal server state
+        // 2. Update execution history buffer
         executionLogs.push({
             query,
             variables: parsedVariables,
-            response: data, 
+            response: primaryData, 
             timestamp: new Date().toISOString()
         });
         if (executionLogs.length > 5) executionLogs.shift();
 
-        // 3. Prepare optimized response for Claude
+        // 3. Optimized response for MCP client
         const responseForClaude: any = {
-            result: data.data,
-            // Only add the cypher field if there's actual data to show
-            ...(cleanCypher.length > 0 ? { cypher: cleanCypher } : {})
+            status: {
+                total: endpoints.length,
+                success: successfulResponses.length,
+                failed: failedResponses.length
+            },
+            result: primaryData.data,
+            ...(cleanCypher.length > 0 ? { cypher: cleanCypher } : {}),
+            ...(failedResponses.length > 0 ? { warnings: failedResponses } : {})
         };
 
         return { 
@@ -319,14 +369,11 @@ registerTool(
 
 /**
  * Tool: introspect-schema
- * Main handler for the introspection tool. 
- * Implements "Agent Recovery" logic to guide the LLM when entities are missing.
+ * Provides schema exploration with built-in agent recovery logic.
  */
 const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
-    // 1. Fetch the schema directly from the source
     const result = await getSchema(true); 
 
-    // Explicitly check if the result is a valid GraphQLSchema object
     if (!result || typeof result === 'string') {
         return {
             content: [{
@@ -337,36 +384,28 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
         };
     }
 
-    // --- 1. INITIALIZE MAPPINGS ---
     const schema = result as GraphQLSchema;
     const typeMap = schema.getTypeMap();
-    
-    // Cache Root Type fields for rapid gap analysis
     const queryType = schema.getQueryType();
     const queryFields = queryType ? queryType.getFields() : {};
     const mutationType = schema.getMutationType();
     const mutationFields = mutationType ? mutationType.getFields() : {};
 
-    // --- 2. GAP ANALYSIS & SELF-HEALING LOOP ---
-    // If specific types were requested, verify their existence in the current schema
+    // Gap analysis for requested types
     if (typeNames && typeNames.length > 0) {
         const missing = typeNames.filter(name => {
             const existsAsType = !!typeMap[name];
             const existsAsMutation = !!mutationFields[name];
             const existsAsQueryField = !!queryFields[name]; 
-            
             return !existsAsType && !existsAsMutation && !existsAsQueryField;
         });
         
-        // If some requested entities are missing, provide the agent with a recovery map
         if (missing.length > 0) {
-            // Filter out internal GraphQL types to reduce noise for the agent
             const internalTypes = ['Query', 'Mutation', 'Subscription'];
             const availableEntities = Object.keys(typeMap).filter(
                 t => !t.startsWith('__') && !internalTypes.includes(t)
             );
             
-            // Generate a pseudo-version ID based on schema state and time
             const schemaVersion = `v${availableEntities.length}.${Math.floor(Date.now() / 10000) % 1000}`;
 
             return {
@@ -374,21 +413,19 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
                     type: "text" as const,
                     text: `❌ PARTIAL RESULTS [Schema ID: ${schemaVersion}]\n\n` +
                           `MISSING ENTITIES: ${missing.join(", ")}\n` +
-                          `REASON: These specific types or fields were not found in the current schema.\n` +
-                          `ACTION: Re-examine the available entities below and correct your query intent.\n\n` +
+                          `REASON: Requested entities not found.\n` +
+                          `ACTION: Re-examine available types below.\n\n` +
                           `AVAILABLE_ENTITIES: ${availableEntities.join(", ")}`
                 }]
             };
         }
     }
 
-    // --- 3. GENERAL MANIFEST GENERATION ---
-    // If no typeNames provided, return a high-level overview of the entry points
+    // Return general manifest if no specific types requested
     if (!typeNames || typeNames.length === 0) {
         const discoveredEntities = new Set<string>();
         
         if (queryType) {
-            // Map Query fields to their underlying Object Types
             const fields = queryType.getFields() as Record<string, GraphQLField<any, any>>;
             Object.values(fields).forEach((field) => {
                 const namedType = getNamedType(field.type);
@@ -413,8 +450,6 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
         };
     }
     
-    // --- 4. DETAILED INTROSPECTION ---
-    // Return filtered schema metadata for the requested types or root fields
     const filtered = introspectSpecificTypes(schema, typeNames);
     return { 
         content: [{ type: "text" as const, text: JSON.stringify(filtered, null, 2) }] 
@@ -434,8 +469,7 @@ registerTool(
     introspectHandler
 );
 
-// --- PROMPTS (The "Add from ..." buttons in Claude UI) ---
-// 1. Connection check
+// --- PROMPTS ---
 registerPrompt(
   server,
   "health-check",
@@ -443,7 +477,6 @@ registerPrompt(
   "Run 'query-graphql' with query '{ __typename }' to verify connection."
 );
 
-// 2. High-level overview
 registerPrompt(
   server,
   "schema-overview",
@@ -451,7 +484,6 @@ registerPrompt(
   "Run 'introspect-schema' to see all types and entry points."
 );
 
-// 3. Data types analysis
 registerPrompt(
   server,
   "list-scalars",
@@ -460,63 +492,56 @@ registerPrompt(
 );
 
 // --- HTTP SERVER LOGIC ---
+/**
+ * Local HTTP server to support GraphiQL UI and SSE transport
+ */
 async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
-    // Standard CORS headers for cross-origin compatibility
+    // Standard CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-mcp-protocol-version, x-mcp-sdk-version');
 
-    // Handle preflight requests
-    if (req.method === 'OPTIONS') { 
-        res.writeHead(204); 
-        res.end(); 
-        return; 
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
     }
 
     const url = new URL(req.url || '', `http://${req.headers.host}`);
 
-    // Serve Web GUI (GraphiQL) - ONLY if explicitly enabled
+    // Render GraphiQL UI
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/graphiql')) {
-        // Check our explicit flag
-        if (process.env.ENABLE_HTTP === 'true') {
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            return res.end(renderGraphiQL(env.ENDPOINT, env.HEADERS));
-        } else {
-            // Forbidden if not explicitly enabled
-            res.writeHead(403, { 'Content-Type': 'text/plain' });
-            return res.end("Forbidden: GraphiQL UI is disabled. Start with ENABLE_HTTP=true to use it.");
-        }
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        return res.end(renderGraphiQL(`http://localhost:6274/mcp`, env.HEADERS));
     }
 
-    // Process MCP JSON-RPC Endpoint
+    // Process MCP/GraphQL requests
     if (url.pathname === '/mcp' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => { body += chunk; });
         req.on('end', async () => {
-            let requestId: any = null; // Defined early to be accessible in catch block
-            
+            let requestId: any = null;
             try {
-                const request = JSON.parse(body);
-                const { method, id, params } = request;
-                requestId = id;
-                
-                console.error(`[HTTP-RPC] Method: ${method} | ID: ${id}`);
+                const payload = JSON.parse(body);
 
-                // --- DYNAMIC DISCOVERY ---
-                if (method === "list-tools" || method === "tools/list") {
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ 
-                        jsonrpc: '2.0', 
-                        id: requestId, 
-                        result: { tools: registeredToolsMetadata } 
-                    }));
+                // Handle raw GraphQL queries (e.g., from Docs or Playground)
+                if (!payload.method && payload.query) {
+                    const handler = toolHandlers.get("query-graphql");
+                    if (handler) {
+                        const mcpResult = await handler({ query: payload.query, variables: payload.variables });
+                        const parsed = JSON.parse(mcpResult.content[0].text);
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        const graphQLResponse = parsed.result.data ? parsed.result : { data: parsed.result };
+                        return res.end(JSON.stringify(graphQLResponse));
+                    }
                 }
 
-                // --- TOOL EXECUTION (CALL) ---
+                // Standard MCP JSON-RPC handling
+                const { method, id, params } = payload;
+                requestId = id;
                 let targetMethod = method;
                 let toolArgs = params;
 
-                // Support both direct calls and standard MCP "call-tool" structure
                 if (method === "call-tool" || method === "tools/call") {
                     targetMethod = params.name;
                     toolArgs = params.arguments;
@@ -532,36 +557,23 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                     }));
                 }
 
-                // Execute the actual business logic for the tool
                 const result = await handler(toolArgs);
-                
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ 
-                    jsonrpc: '2.0', 
-                    id: requestId, 
-                    result 
-                }));
+                res.end(JSON.stringify({ jsonrpc: '2.0', id: requestId, result }));
 
             } catch (e: any) {
                 console.error(`[HTTP-ERROR] ${e.message}`);
                 res.writeHead(500);
                 res.end(JSON.stringify({ 
                     jsonrpc: '2.0', 
-                    id: requestId,
-                    error: { code: -32603, message: e.message || "Internal Server Error" } 
+                    id: requestId, 
+                    error: { code: -32603, message: e.message } 
                 }));
             }
         });
         return;
     }
-    
-    // Health check endpoint for monitoring
-    if (url.pathname === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ status: "ok", server: env.NAME }));
-    }
 
-    // Default 404 for unknown paths
     res.writeHead(404);
     res.end("Not Found");
 }
@@ -571,7 +583,7 @@ async function main() {
     const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT);
     const isHttpExplicitlyEnabled = process.env.ENABLE_HTTP === "true";
 
-    // Open HTTP port by default for MCP SSE, unless explicitly disabled
+    // Enable HTTP port by default unless explicitly disabled or in inspector mode
     if (process.env.ENABLE_HTTP !== "false" && !isInspector) {
         const serverHttp = http.createServer(handleHttpRequest);
         
@@ -582,11 +594,9 @@ async function main() {
         });
 
         serverHttp.listen(env.MCP_PORT, () => {
-            // All-in-one status report
             console.error(`[SYSTEM] Server "${env.NAME}" v${getVersion()} active`);
             console.error(`🤖 MCP SSE: http://localhost:${env.MCP_PORT}/mcp`);
 
-            // Show UI only if explicitly requested
             if (isHttpExplicitlyEnabled) {
                 console.error(`🎨 GraphiQL UI: http://localhost:${env.MCP_PORT}/graphiql`);
             }
@@ -596,6 +606,7 @@ async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
 
+    // Background schema initialization
     getSchema().catch(() => {});
 }
 
