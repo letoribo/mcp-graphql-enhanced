@@ -23,6 +23,31 @@ This is the best place to share your feedback, report issues, or suggest new "en
 * ✅ **Dynamic Schema Evolution** — Smart diagnostics and gap analysis for servers that regenerate GraphQL types on-the-fly (like Neo4j).
 * ✅ **Deep Observability** — Automatic Cypher extraction and cleaning from GraphQL extensions.
 
+## 🚀 Multi-Endpoint Broadcast (Experimental in v3.9.0+)
+Starting from **v3.9.0**, the server supports querying multiple GraphQL endpoints simultaneously. This was originally designed to synchronize mutations across different environments (e.g., Node.js and Python backends), but it opens up powerful possibilities for data aggregation.
+
+*   **Zero Breaking Changes**: If you provide a single URL in `ENDPOINT`, the server behaves exactly as before.
+*   **Smart Aggregation**: When multiple comma-separated URLs are provided, the server broadcasts the query to all of them and **merges the resulting arrays**.
+*   **Bypass Free Tier Limits**: Perfect for users of "Free Tier" cloud databases (like Neo4j Aura). You can split your data across multiple free instances and use this bridge to query them as a **single unified graph**, effectively bypassing entity count limitations.
+*   **Deduplication**: The bridge automatically removes duplicate objects based on their unique fields to keep the AI's context window clean.
+
+> **⚠️ Use at your own risk:** This feature assumes all endpoints share the same (or very similar) GraphQL schema. The introspection is performed against the **first** endpoint in the list.
+
+#### 💡 Use Case: Bridging WSL and Windows (PowerShell)
+A common challenge for Windows developers is the network isolation between the Windows Subsystem for Linux (WSL) and the host OS. This feature allows you to bridge these two worlds into a "Unified Nervous System".  
+
+Example configuration for Claude Desktop:
+```bash
+{
+  "ENDPOINT": "http://DESKTOP-NAME.local:2311/graphql,http://127.0.0.1:4000/graphql"
+}
+```
+*   **Hybrid Ecosystem**: Seamlessly query and aggregate data across Windows-native processes (PowerShell) and Linux-based environments (WSL).  
+
+*   **mDNS Support**: By using .local addresses, the bridge automatically resolves the host machine's IP from within the WSL environment.  
+
+*   **Transparent Aggregation**: The AI assistant interacts with a single unified schema, unaware that the data is being fetched from different operating systems simultaneously.
+
 ## 🔍 Advanced Observability & Cypher
 The bridge provides deep insights into how the LLM interacts with your graph database. 
 

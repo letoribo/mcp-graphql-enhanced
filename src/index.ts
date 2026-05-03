@@ -30,7 +30,7 @@ const getVersion = () => {
         const pkg = require("../package.json");
         return pkg.version;
     } catch {
-        return "3.6.0";
+        return "3.9.0";
     }
 };
 
@@ -310,34 +310,51 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
             throw new Error(`All endpoints failed: ${failedResponses.join('; ')}`);
         }
 
-        const primaryData = successfulResponses[0].data;
+        const aggregatedResult: any = {};
 
-        // 1. Extract and sanitize Cypher from the primary response
-        const rawCypher = primaryData.extensions?.cypher || [];
-        const cleanCypher = rawCypher.map((c: string) => 
-            c.replace(/^CYPHER: /, '')
-             .replace(/^CYPHER 5\n/, '')
-             .replace(/\nPARAMS: \{\}$/, '')
+        successfulResponses.forEach((response) => {
+            const data = response.data.data;
+            if (data && data.patterns) {
+                console.error(`[DEBUG] Received ${data.patterns.length} patterns from ${response.url}`);
+            }
+            if (!data) return;
+
+            Object.keys(data).forEach(key => {
+                if (Array.isArray(data[key])) {
+                    // Merge arrays from different sources
+                    aggregatedResult[key] = [...(aggregatedResult[key] || []), ...data[key]];
+                } else if (typeof data[key] === 'object' && data[key] !== null) {
+                    // Merge objects (e.g. metadata)
+                    aggregatedResult[key] = { ...(aggregatedResult[key] || {}), ...data[key] };
+                } else {
+                    // Use last value for primitives
+                    aggregatedResult[key] = data[key];
+                }
+            });
+        });
+
+        // 2. Deduplication (Removes duplicates by 'sticking' field)
+        if (aggregatedResult.patterns) {
+            const unique = new Map();
+            aggregatedResult.patterns.forEach((p: any) => unique.set(p.sticking, p));
+            aggregatedResult.patterns = Array.from(unique.values());
+        }
+
+        // 3. Extract Cypher queries from extensions
+        const allCypher = successfulResponses.flatMap(r => r.data.extensions?.cypher || []);
+        const cleanCypher = allCypher.map((c: string) => 
+            c.replace(/^CYPHER: /, '').replace(/^CYPHER 5\n/, '').replace(/\nPARAMS: \{\}$/, '')
         );
 
-        // 2. Update execution history buffer
-        executionLogs.push({
-            query,
-            variables: parsedVariables,
-            response: primaryData, 
-            timestamp: new Date().toISOString()
-        });
-        if (executionLogs.length > 5) executionLogs.shift();
-
-        // 3. Optimized response for MCP client
+        // 4. Final response for the AI agent
         const responseForClaude: any = {
             status: {
                 total: endpoints.length,
                 success: successfulResponses.length,
                 failed: failedResponses.length
             },
-            result: primaryData.data,
-            ...(cleanCypher.length > 0 ? { cypher: cleanCypher } : {}),
+            result: aggregatedResult,
+            ...(cleanCypher.length > 0 ? { cypher: Array.from(new Set(cleanCypher)) } : {}),
             ...(failedResponses.length > 0 ? { warnings: failedResponses } : {})
         };
 
