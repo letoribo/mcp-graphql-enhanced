@@ -23,15 +23,14 @@ This is the best place to share your feedback, report issues, or suggest new "en
 * ✅ **Dynamic Schema Evolution** — Smart diagnostics and gap analysis for servers that regenerate GraphQL types on-the-fly (like Neo4j).
 * ✅ **Deep Observability** — Automatic Cypher extraction and cleaning from GraphQL extensions.
 
-## 🚀 Multi-Endpoint Broadcast (Experimental in v3.9.0+)
-Starting from **v3.9.0**, the server supports querying multiple GraphQL endpoints simultaneously. This was originally designed to synchronize mutations across different environments (e.g., Node.js and Python backends), but it opens up powerful possibilities for data aggregation.
+## 🚀 Federated Multi-Node Architecture (v3.9.1+)
+The server operates as a Federated GraphQL Gateway, merging independent nodes into a unified system.
 
 *   **Zero Breaking Changes**: If you provide a single URL in `ENDPOINT`, the server behaves exactly as before.
-*   **Smart Aggregation**: When multiple comma-separated URLs are provided, the server broadcasts the query to all of them and **merges the resulting arrays**.
+*   **Federated Introspection**: Scans all endpoints simultaneously to build a global capability map.
+*   **Smart Aggregation**: When multiple comma-separated URLs are provided, the server broadcasts queries and merges results using universal deep deduplication (object-level).
+*   **Conflict Handling**: Identifies structural differences in identical Type names across nodes and exposes them uniquely.
 *   **Bypass Free Tier Limits**: Perfect for users of "Free Tier" cloud databases (like Neo4j Aura). You can split your data across multiple free instances and use this bridge to query them as a **single unified graph**, effectively bypassing entity count limitations.
-*   **Deduplication**: The bridge automatically removes duplicate objects based on their unique fields to keep the AI's context window clean.
-
-> **⚠️ Use at your own risk:** This feature assumes all endpoints share the same (or very similar) GraphQL schema. The introspection is performed against the **first** endpoint in the list.
 
 #### 💡 Use Case: Bridging WSL and Windows (PowerShell)
 A common challenge for Windows developers is the network isolation between the Windows Subsystem for Linux (WSL) and the host OS. This feature allows you to bridge these two worlds into a "Unified Nervous System".  
