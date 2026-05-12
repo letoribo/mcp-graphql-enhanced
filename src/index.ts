@@ -6,16 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { parse } from "graphql/language";
 import z from "zod";
 import { renderGraphiQL} from "./helpers/graphiql.js";
-import { 
-    isObjectType, 
-    getNamedType, 
-    GraphQLField,
-    GraphQLSchema,
-    buildClientSchema,
-    getIntrospectionQuery,
-    printSchema,
-    isScalarType
-} from "graphql";
+import type { GraphQLSchema } from "graphql";
 
 // Helper imports
 import { checkDeprecatedArguments } from "./helpers/deprecation.js";
@@ -34,7 +25,7 @@ const getVersion = () => {
         const pkg = require("../package.json");
         return pkg.version;
     } catch {
-        return "3.9.1";
+        return "3.9.2";
     }
 };
 
@@ -148,71 +139,79 @@ async function performUpdate(force: boolean): Promise<string> {
     const startTime = Date.now();
 
     try {
-        const endpoints = env.ENDPOINT.split(',').map(url => url.trim());
-        console.error(`[SYNC] Initializing broadcast to ${endpoints.length} nodes...`);
-        
-        const results = await Promise.allSettled(
-            endpoints.map(async (url) => {
-                const response = await fetch(url, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json", ...env.HEADERS },
-                    body: JSON.stringify({ query: getIntrospectionQuery() }),
-                    signal: AbortSignal.timeout(10000)
-                });
-                if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
-                const result = await response.json();
-                if (!result.data) throw new Error("Empty introspection data");
-                
-                const schema = buildClientSchema(result.data) as GraphQLSchema & { _originUrl?: string };
-                schema._originUrl = url;
-                return { url, schema };
-            })
-        );
+        const { buildClientSchema, getIntrospectionQuery, printSchema, buildASTSchema, parse: gqlParse, isObjectType } = require("graphql");
+        let tempSchemas: any[] = [];
 
-        const successful = results
-            .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
-            .map(r => r.value);
+        // --- FETCHING LOGIC: LOCAL SDL OR REMOTE BROADCAST ---
+        if (env.SCHEMA) {
+            let sdl: string;
+            if (env.SCHEMA.startsWith("http")) {
+                const response = await fetch(env.SCHEMA);
+                if (!response.ok) throw new Error(`Remote_SDL_Fetch_Failed: ${response.statusText}`);
+                sdl = await response.text();
+            } else {
+                sdl = await introspectLocalSchema(env.SCHEMA);
+            }
+            tempSchemas = [buildASTSchema(gqlParse(sdl))];
+        } else {
+            const endpoints = env.ENDPOINT.split(',').map(url => url.trim());
+            
+            const results = await Promise.all(endpoints.map(async (url) => {
+                try {
+                    const response = await fetch(url, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", ...env.HEADERS },
+                        body: JSON.stringify({ query: getIntrospectionQuery() }),
+                    });
+                    if (!response.ok) return null;
+                    const result = await response.json();
+                    return result.data ? buildClientSchema(result.data) : null;
+                } catch (e) {
+                    console.error(`[SYNC-WARN] Failed to reach ${url}`);
+                    return null;
+                }
+            }));
 
-        const failures = results
-            .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
-            .map(r => r.reason.message);
-
-        if (successful.length === 0) {
-            throw new Error(`Federation failed. All nodes unreachable: ${failures.join(', ')}`);
+            tempSchemas = results.filter((s) => s !== null);
         }
 
-        // Update cache with all discovered schemas
-        cachedSchemas = successful.map(s => s.schema);
-        cachedSchemaObject = cachedSchemas[0]; // Baseline schema
-        cachedSDL = printSchema(cachedSchemaObject);
+        if (tempSchemas.length === 0) {
+            throw new Error("No valid schemas could be retrieved.");
+        }
 
-        // Generate Node Manifest for AI reasoning (Full data, no slices)
-        (global as any).nodeManifest = successful.map(node => {
-            const typeMap = node.schema.getTypeMap();
-            const domainTypes = Object.keys(typeMap).filter(name => {
-                const type = typeMap[name];
-                return !name.startsWith('__') && !isScalarType(type);
-            });
+        // Use the primary schema for the UI/Metadata context
+        cachedSchemaObject = tempSchemas[0]; 
+        const currentSDL = printSchema(cachedSchemaObject);
 
-            return {
-                endpoint: node.url,
-                availableMutations: Object.keys(node.schema.getMutationType()?.getFields() || {}),
-                domainEntities: domainTypes
-            };
+        const typeMap = cachedSchemaObject.getTypeMap();
+        const businessTypes = Object.keys(typeMap).filter(typeName => {
+            const type = typeMap[typeName];
+            return !typeName.startsWith('__') && 
+                   !['Query', 'Mutation', 'Subscription'].includes(typeName) &&
+                   isObjectType(type);
         });
 
-        const uniqueTypeCount = new Set(cachedSchemas.flatMap(s => Object.keys(s.getTypeMap()))).size;
-        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-        
-        return `✅ FEDERATION SYNCED: ${successful.length} active nodes, ${uniqueTypeCount} unique types discovered in ${duration}s.`;
+        if (currentSDL !== cachedSDL) {
+            cachedSDL = currentSDL;
+            const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+            const sourceInfo = env.SCHEMA ? 'SDL File' : `${tempSchemas.length} Active Nodes`;
+            
+            return [
+                `✨ SCHEMA EVOLVED (${duration}s)`,
+                `📊 Source: ${sourceInfo}`,
+                `🧬 Types: ${businessTypes.length}`,
+                `---`,
+                `The bridge has updated the graph model.`
+            ].join('\n');
+        }
+
+        return `✅ Status: Schema stable (${businessTypes.length} types).`;
 
     } catch (error: any) {
         console.error(`[CRITICAL] Sync failure: ${error.message}`);
-        schemaLoadError = error;
-        return `❌ SYNC ERROR: ${error.message}`;
+        throw error;
     } finally {
         isUpdating = false;
-        updatePromise = null;
     }
 }
 
@@ -386,25 +385,51 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
     const url = new URL(req.url || '', `http://${req.headers.host}`);
 
+    // Render GraphiQL UI
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/graphiql')) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         return res.end(renderGraphiQL(`http://localhost:${env.MCP_PORT}/mcp`, env.HEADERS));
     }
 
+    // Process MCP/GraphQL requests
     if (url.pathname === '/mcp' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => { body += chunk; });
         req.on('end', async () => {
+            let requestId: any = null;
             try {
                 const payload = JSON.parse(body);
+
+                // Handle raw GraphQL queries sent directly to /mcp without JSON-RPC structure
+                if (!payload.method && payload.query) {
+                    const handler = toolHandlers.get("query-graphql");
+                    if (handler) {
+                        const mcpResult = await handler({ 
+                            query: payload.query, 
+                            variables: payload.variables 
+                        });
+                        
+                        const parsed = JSON.parse(mcpResult.content[0].text);
+                        res.writeHead(200, { 'Content-Type': 'application/json' });
+                        const graphQLResponse = parsed.data ? parsed : { data: parsed };
+                        return res.end(JSON.stringify(graphQLResponse));
+                    }
+                }
+
                 const { method, id, params } = payload;
+                requestId = id;
+
                 const target = (method === "call-tool" || method === "tools/call") ? params.name : method;
                 const args = (method === "call-tool" || method === "tools/call") ? params.arguments : params;
 
                 const handler = toolHandlers.get(target);
                 if (!handler) {
                     res.writeHead(404);
-                    return res.end(JSON.stringify({ error: { code: -32601, message: "Method not found" } }));
+                    return res.end(JSON.stringify({ 
+                        jsonrpc: '2.0', 
+                        id: requestId, 
+                        error: { code: -32601, message: `Method ${target} not found` } 
+                    }));
                 }
 
                 const result = await handler(args);
@@ -412,7 +437,11 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                 res.end(JSON.stringify({ jsonrpc: '2.0', id, result }));
             } catch (e: any) {
                 res.writeHead(500);
-                res.end(JSON.stringify({ error: { message: e.message } }));
+                res.end(JSON.stringify({ 
+                    jsonrpc: '2.0', 
+                    id: requestId, 
+                    error: { message: e.message } 
+                }));
             }
         });
         return;
