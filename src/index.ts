@@ -25,7 +25,7 @@ const getVersion = () => {
         const pkg = require("../package.json");
         return pkg.version;
     } catch {
-        return "3.9.2";
+        return "3.9.3";
     }
 };
 
@@ -71,9 +71,24 @@ const EnvSchema = z.object({
             return value === "true";
         })
         .default("auto"),
+    // Support for custom instance authorization via environment variables
+    example_env1: z.string().optional(),
+    example_env2: z.string().optional(),
 });
 
 const env = EnvSchema.parse(process.env);
+
+/**
+ * Build dynamic auth headers for nodes that require credentials
+ */
+function getEffectiveHeaders(): Record<string, string> {
+    const baseHeaders = { ...env.HEADERS };
+    if (env.example_env1 && env.example_env2) {
+        baseHeaders["X-Auth-Username"] = env.example_env1;
+        baseHeaders["X-Auth-Password"] = env.example_env2;
+    }
+    return baseHeaders;
+}
 
 /**
  * Initialize MCP Server with full capabilities
@@ -141,6 +156,9 @@ async function performUpdate(force: boolean): Promise<string> {
     try {
         const { buildClientSchema, getIntrospectionQuery, printSchema, buildASTSchema, parse: gqlParse, isObjectType } = require("graphql");
         let tempSchemas: any[] = [];
+        const manifest: any[] = [];
+
+        const activeHeaders = getEffectiveHeaders();
 
         // --- FETCHING LOGIC: LOCAL SDL OR REMOTE BROADCAST ---
         if (env.SCHEMA) {
@@ -152,7 +170,15 @@ async function performUpdate(force: boolean): Promise<string> {
             } else {
                 sdl = await introspectLocalSchema(env.SCHEMA);
             }
-            tempSchemas = [buildASTSchema(gqlParse(sdl))];
+            const localSchema = buildASTSchema(gqlParse(sdl));
+            localSchema._originUrl = "local-sdl";
+            tempSchemas = [localSchema];
+            
+            manifest.push({
+                endpoint: "Local SDL File",
+                availableMutations: ["*"],
+                domainEntities: Object.keys(localSchema.getTypeMap()).filter(t => !t.startsWith('__'))
+            });
         } else {
             const endpoints = env.ENDPOINT.split(',').map(url => url.trim());
             
@@ -160,12 +186,27 @@ async function performUpdate(force: boolean): Promise<string> {
                 try {
                     const response = await fetch(url, {
                         method: "POST",
-                        headers: { "Content-Type": "application/json", ...env.HEADERS },
+                        headers: { "Content-Type": "application/json", ...activeHeaders },
                         body: JSON.stringify({ query: getIntrospectionQuery() }),
                     });
                     if (!response.ok) return null;
                     const result = await response.json();
-                    return result.data ? buildClientSchema(result.data) : null;
+                    if (!result.data) return null;
+
+                    const schemaInstance = buildClientSchema(result.data);
+                    schemaInstance._originUrl = url;
+
+                    const typeMap = schemaInstance.getTypeMap();
+                    const entities = Object.keys(typeMap).filter(t => !t.startsWith('__') && !['Query', 'Mutation', 'Subscription'].includes(t));
+                    const hasMutation = !!typeMap['Mutation'];
+
+                    manifest.push({
+                        endpoint: url,
+                        availableMutations: hasMutation ? ["Dynamic CRUD"] : [],
+                        domainEntities: entities
+                    });
+
+                    return schemaInstance;
                 } catch (e) {
                     console.error(`[SYNC-WARN] Failed to reach ${url}`);
                     return null;
@@ -179,8 +220,10 @@ async function performUpdate(force: boolean): Promise<string> {
             throw new Error("No valid schemas could be retrieved.");
         }
 
-        // Use the primary schema for the UI/Metadata context
-        cachedSchemaObject = tempSchemas[0]; 
+        cachedSchemas = tempSchemas;
+        (global as any).nodeManifest = manifest;
+
+        cachedSchemaObject = cachedSchemas[0]; 
         const currentSDL = printSchema(cachedSchemaObject);
 
         const typeMap = cachedSchemaObject.getTypeMap();
@@ -194,7 +237,7 @@ async function performUpdate(force: boolean): Promise<string> {
         if (currentSDL !== cachedSDL) {
             cachedSDL = currentSDL;
             const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-            const sourceInfo = env.SCHEMA ? 'SDL File' : `${tempSchemas.length} Active Nodes`;
+            const sourceInfo = env.SCHEMA ? 'SDL File' : `${cachedSchemas.length} Active Nodes`;
             
             return [
                 `✨ SCHEMA EVOLVED (${duration}s)`,
@@ -235,7 +278,7 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
         }
         
         const runtimeHeaders = headers ? JSON.parse(headers) : {};
-        const fetchHeaders = { "Content-Type": "application/json", ...env.HEADERS, ...runtimeHeaders };
+        const fetchHeaders = { "Content-Type": "application/json", ...getEffectiveHeaders(), ...runtimeHeaders };
         const fetchVariables = variables ? (typeof variables === 'string' ? JSON.parse(variables) : variables) : undefined;
 
         const endpoints = env.ENDPOINT.split(',').map(url => url.trim());
@@ -258,7 +301,6 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
 
         if (successes.length === 0) throw new Error("Execution failed on all available nodes.");
 
-        // Aggregate and Deduplicate
         const mergedData: any = {};
         successes.forEach((resp) => {
             const nodeData = resp.data.data;
@@ -268,7 +310,6 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
                 if (Array.isArray(nodeData[key])) {
                     const existing = mergedData[key] || [];
                     const combined = [...existing, ...nodeData[key]];
-                    // Universal object-level deduplication
                     mergedData[key] = Array.from(new Set(combined.map(v => JSON.stringify(v))))
                                           .map(s => JSON.parse(s));
                 } else if (typeof nodeData[key] === 'object' && nodeData[key] !== null) {
@@ -279,7 +320,6 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
             });
         });
 
-        // Restore Cypher extraction logic
         const cypherLogs = successes.flatMap(r => r.data.extensions?.cypher || []);
         const cleanCypher = cypherLogs.map((c: string) => 
             c.replace(/^CYPHER: /, '').replace(/^CYPHER 5\n/, '').replace(/\nPARAMS: \{\}$/, '')
@@ -312,12 +352,11 @@ registerTool(server, toolHandlers, registeredToolsMetadata, "query-graphql", "Ex
  * Provides a global view of all nodes and resolves type conflicts.
  */
 const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
-    await getSchema(true);
+    await getSchema(false);
     if (cachedSchemas.length === 0) {
         return { content: [{ type: "text" as const, text: "❌ System is not initialized." }] };
     }
 
-    // Default: Return the Manifest of all nodes
     if (!typeNames || typeNames.length === 0) {
         const manifest = (global as any).nodeManifest || [];
         const body = manifest.map((m: any) => 
@@ -341,14 +380,12 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
         if (variants.length === 1) {
             resolution[name] = variants[0].data;
         } else {
-            // Check for structural equality
             const baseline = JSON.stringify(variants[0].data);
             const allMatch = variants.every(v => JSON.stringify(v.data) === baseline);
 
             if (allMatch) {
                 resolution[name] = variants[0].data;
             } else {
-                // Conflict: Expose all variants with node origin
                 variants.forEach((v, idx) => {
                     resolution[`${name}_from_node_${idx + 1}`] = {
                         ...v.data,
@@ -385,13 +422,11 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
     const url = new URL(req.url || '', `http://${req.headers.host}`);
 
-    // Render GraphiQL UI
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/graphiql')) {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         return res.end(renderGraphiQL(`http://localhost:${env.MCP_PORT}/mcp`, env.HEADERS));
     }
 
-    // Process MCP/GraphQL requests
     if (url.pathname === '/mcp' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => { body += chunk; });
@@ -400,7 +435,6 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
             try {
                 const payload = JSON.parse(body);
 
-                // Handle raw GraphQL queries sent directly to /mcp without JSON-RPC structure
                 if (!payload.method && payload.query) {
                     const handler = toolHandlers.get("query-graphql");
                     if (handler) {
@@ -452,7 +486,7 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
 // --- SERVER LIFECYCLE ---
 async function main() {
-    const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT);
+    const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
     
     if (process.env.ENABLE_HTTP !== "false" && !isInspector) {
         const httpSrv = http.createServer(handleHttpRequest);
@@ -472,11 +506,9 @@ async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
 
-    // Initial background sync
     getSchema(true).catch(err => console.error(`[BOOT-WARN] Initial sync failed: ${err.message}`));
 }
 
-// Global process management
 process.on('SIGINT', () => { console.error('[SYSTEM] Shutting down...'); process.exit(0); });
 process.on('SIGTERM', () => { process.exit(0); });
 
