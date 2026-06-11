@@ -25,7 +25,7 @@ const getVersion = () => {
         const pkg = require("../package.json");
         return pkg.version;
     } catch {
-        return "3.9.3";
+        return "3.9.4";
     }
 };
 
@@ -290,8 +290,15 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
                     body: JSON.stringify({ query, variables: fetchVariables }),
                     signal: AbortSignal.timeout(15000)
                 });
-                if (!response.ok) throw new Error(`Node ${url} returned ${response.status}`);
-                return { url, data: await response.json() };
+                
+                // Всегда читаем тело ответа, даже если статус не 200 (GraphQL возвращает ошибки в 400-х кодах)
+                const result = await response.json();
+                
+                if (!response.ok && !result.errors) {
+                    throw new Error(`Node ${url} returned status ${response.status}`);
+                }
+                
+                return { url, data: result };
             })
         );
 
@@ -300,6 +307,18 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
             .map(r => r.value);
 
         if (successes.length === 0) throw new Error("Execution failed on all available nodes.");
+
+        // Собираем ошибки GraphQL (включая валидацию, например, missing args)
+        const allErrors = successes.flatMap(s => s.data.errors || []);
+        if (allErrors.length > 0) {
+            return { 
+                content: [{ 
+                    type: "text" as const, 
+                    text: `❌ GraphQL Validation/Execution Error:\n${JSON.stringify(allErrors, null, 2)}` 
+                }], 
+                isError: true 
+            };
+        }
 
         const mergedData: any = {};
         successes.forEach((resp) => {
@@ -443,7 +462,13 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                             variables: payload.variables 
                         });
                         
-                        const parsed = JSON.parse(mcpResult.content[0].text);
+                        const resultText = mcpResult.content[0].text;
+                        if (mcpResult.isError || resultText.startsWith('❌')) {
+                            res.writeHead(400, { 'Content-Type': 'application/json' });
+                            return res.end(JSON.stringify({ errors: [{ message: resultText }] }));
+                        }
+                        const parsed = JSON.parse(resultText);
+
                         res.writeHead(200, { 'Content-Type': 'application/json' });
                         const graphQLResponse = parsed.data ? parsed : { data: parsed };
                         return res.end(JSON.stringify(graphQLResponse));
