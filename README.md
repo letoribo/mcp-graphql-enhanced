@@ -32,6 +32,10 @@ The server operates as a Federated GraphQL Gateway, merging independent nodes in
 *   **Conflict Handling**: Identifies structural differences in identical Type names across nodes and exposes them uniquely.
 *   **Bypass Free Tier Limits**: Perfect for users of "Free Tier" cloud databases (like Neo4j Aura). You can split your data across multiple free instances and use this bridge to query them as a **single unified graph**, effectively bypassing entity count limitations.
 
+#### Proof of Concept:
+See a real-world demonstration of the federated query synthesis in action, where the agent aggregates live Discord data with historical Neo4j insights:
+🔗 Live Federation Analysis ([Shared Chat](https://claude.ai/share/69a1f8dc-10f0-4c5b-bfe2-267f1294851a))
+
 #### 💡 Use Case: Bridging WSL and Windows (PowerShell)
 A common challenge for Windows developers is the network isolation between the Windows Subsystem for Linux (WSL) and the host OS. This feature allows you to bridge these two worlds into a "Unified Nervous System".  
 
@@ -114,7 +118,7 @@ npx @modelcontextprotocol/inspector \
 
 | Environment Variable | Description | Default |
 | :--- | :--- | :--- |
-| `ENDPOINT` | GraphQL endpoint URL | `https://mcp-neo4j-discord.vercel.app/api/graphiql` |
+| `ENDPOINT` | GraphQL endpoint(s). Supports comma-separated list for Multi-Node Architecture. | `https://mcp-discord.vercel.app/api/graphiql` |
 | `HEADERS` | JSON string containing headers for requests | `{}` |
 | `ALLOW_MUTATIONS` | Enable mutation operations (disabled by default) | `false` |
 | `NAME` | Name of the MCP server | `mcp-graphql-enhanced` |

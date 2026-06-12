@@ -25,7 +25,7 @@ const getVersion = () => {
         const pkg = require("../package.json");
         return pkg.version;
     } catch {
-        return "3.9.4";
+        return "4.0.0";
     }
 };
 
@@ -42,7 +42,7 @@ const EnvSchema = z.object({
             return val;
         },
         z.string().min(1) 
-    ).default("https://mcp-neo4j-discord.vercel.app/api/graphiql"),
+    ).default("https://mcp-discord.vercel.app/api/graphiql"),
     ALLOW_MUTATIONS: z
         .enum(["true", "false"])
         .transform((value: string) => value === "true")
