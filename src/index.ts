@@ -22,7 +22,7 @@ import { registerPrompt } from "./helpers/prompt-registry.js";
  */
 const getVersion = () => {
     try {
-        const pkg = require("../package.json");
+        const pkg = require("./package.json");
         return pkg.version;
     } catch {
         return "dev-version";
