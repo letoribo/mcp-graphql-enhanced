@@ -30,7 +30,7 @@
 	},
 	"scripts": {
 		"dev": "tsx --watch src/index.ts",
-		"build": "tsc && chmod +x dist/index.js",
+		"build": "tsc && cp package.json dist/package.json && chmod +x dist/index.js",
 		"start": "node dist/index.js",
 		"format": "prettier --write ."
 	},

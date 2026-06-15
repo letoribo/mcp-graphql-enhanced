@@ -25,7 +25,7 @@ const getVersion = () => {
         const pkg = require("../package.json");
         return pkg.version;
     } catch {
-        return "4.0.0";
+        return "dev-version";
     }
 };
 
@@ -291,7 +291,6 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
                     signal: AbortSignal.timeout(15000)
                 });
                 
-                // Всегда читаем тело ответа, даже если статус не 200 (GraphQL возвращает ошибки в 400-х кодах)
                 const result = await response.json();
                 
                 if (!response.ok && !result.errors) {
@@ -308,7 +307,6 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
 
         if (successes.length === 0) throw new Error("Execution failed on all available nodes.");
 
-        // Собираем ошибки GraphQL (включая валидацию, например, missing args)
         const allErrors = successes.flatMap(s => s.data.errors || []);
         if (allErrors.length > 0) {
             return { 
@@ -360,11 +358,24 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
 };
 
 toolHandlers.set("query-graphql", queryGraphqlHandler);
-registerTool(server, toolHandlers, registeredToolsMetadata, "query-graphql", "Execute a GraphQL query across all nodes in the federated system", {
-    query: z.string().describe("The GraphQL query or mutation string"),
-    variables: z.string().optional().describe("JSON string of variables"),
-    headers: z.string().optional().describe("JSON string of extra headers"),
-}, queryGraphqlHandler);
+registerTool(
+    server, 
+    toolHandlers, 
+    registeredToolsMetadata, 
+    "query-graphql", 
+    "Execute GraphQL operations (queries and mutations) against the federated system. " +
+    "WARNING: This tool performs remote operations. 'Mutation' operations will modify persistent state; " +
+    "execute these only when a state change is intended. " +
+    "Prerequisites: Verify schema structure using 'introspect-schema' before executing complex queries. " +
+    "Security: Inherits environment-based authentication. " +
+    "Returns: A JSON object containing the execution result ('data') or a list of 'errors' in case of failure.",
+    {
+        query: z.string().describe("The GraphQL query or mutation string."),
+        variables: z.string().optional().describe("JSON string of variables for the operation."),
+        headers: z.string().optional().describe("JSON string of extra HTTP headers for the request."),
+    }, 
+    queryGraphqlHandler
+);
 
 /**
  * Tool: introspect-schema
@@ -424,9 +435,24 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
 };
 
 toolHandlers.set("introspect-schema", introspectHandler);
-registerTool(server, toolHandlers, registeredToolsMetadata, "introspect-schema", "Retrieve full type definitions and resolve conflicts across all system nodes", {
-    typeNames: z.array(z.string()).optional().describe("List of type names to introspect"),
-}, introspectHandler);
+registerTool(
+    server, 
+    toolHandlers, 
+    registeredToolsMetadata, 
+    "introspect-schema", 
+    "Retrieve the full GraphQL schema and type definitions. " +
+    "READ-ONLY: This tool is strictly non-destructive. It fetches schema metadata and performs internal conflict resolution " +
+    "based on timestamps in memory. It does not modify, delete, or create data on the remote GraphQL endpoint. " +
+    "Use this for initial discovery and schema analysis before calling 'query-graphql'. " +
+    "Returns a structured JSON object containing type definitions and field specifications. " +
+    "If 'typeNames' is provided, it restricts output to those specific types. " +
+    "CAUTION: For large-scale schemas (e.g., GitHub GraphQL API or @neo4j/graphql models), the response may be truncated or empty " +
+    "if requested without filtering. Always use 'typeNames' to target specific segments when working with complex production schemas.",
+    {
+        typeNames: z.array(z.string()).optional().describe("List of specific GraphQL type names to introspect. If omitted, the full schema is returned (use with caution on large APIs)."),
+    }, 
+    introspectHandler
+);
 
 // --- PROMPT REGISTRY ---
 registerPrompt(server, "system-health", "Check status of all nodes", "Perform a simple __typename query on all endpoints.");
