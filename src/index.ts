@@ -504,6 +504,15 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                 const { method, id, params } = payload;
                 requestId = id;
 
+                if (method === "tools/list" || method === "list-tools") {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ 
+                        jsonrpc: '2.0', 
+                        id: requestId, 
+                        result: { tools: registeredToolsMetadata } 
+                    }));
+                }
+
                 const target = (method === "call-tool" || method === "tools/call") ? params.name : method;
                 const args = (method === "call-tool" || method === "tools/call") ? params.arguments : params;
 
