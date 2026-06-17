@@ -38,10 +38,10 @@ const EnvSchema = z.object({
     NAME: z.string().default("mcp-graphql-enhanced"),
     ENDPOINT: z.preprocess(
         (val: unknown) => {
-            if (typeof val === 'string') return val.trim();
-            return val;
+            if (typeof val === 'string' && val.trim().length > 0) return val.trim();
+            return undefined;
         },
-        z.string().min(1) 
+        z.string().url("ENDPOINT must be a valid URL")
     ).default("https://mcp-discord.vercel.app/api/graphiql"),
     ALLOW_MUTATIONS: z
         .enum(["true", "false"])
@@ -71,9 +71,6 @@ const EnvSchema = z.object({
             return value === "true";
         })
         .default("auto"),
-    // Support for custom instance authorization via environment variables
-    example_env1: z.string().optional(),
-    example_env2: z.string().optional(),
 });
 
 const env = EnvSchema.parse(process.env);
@@ -82,12 +79,10 @@ const env = EnvSchema.parse(process.env);
  * Build dynamic auth headers for nodes that require credentials
  */
 function getEffectiveHeaders(): Record<string, string> {
-    const baseHeaders = { ...env.HEADERS };
-    if (env.example_env1 && env.example_env2) {
-        baseHeaders["X-Auth-Username"] = env.example_env1;
-        baseHeaders["X-Auth-Password"] = env.example_env2;
-    }
-    return baseHeaders;
+    return { 
+        ...env.HEADERS,
+        "Content-Type": "application/json" 
+    };
 }
 
 /**
@@ -186,10 +181,27 @@ async function performUpdate(force: boolean): Promise<string> {
                 try {
                     const response = await fetch(url, {
                         method: "POST",
-                        headers: { "Content-Type": "application/json", ...activeHeaders },
-                        body: JSON.stringify({ query: getIntrospectionQuery() }),
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Accept": "application/json",
+                            ...activeHeaders
+                        },
+                        body: JSON.stringify({ 
+                            query: getIntrospectionQuery({
+                                descriptions: false,
+                                directiveIsRepeatable: false,
+                                inputValueDeprecation: false,
+                                schemaDescription: false,
+                                typeDepth: 1,
+                            }) 
+                        }),
                     });
-                    if (!response.ok) return null;
+                    
+                    if (!response.ok) {
+                        const errText = await response.text();
+                        throw new Error(`Status ${response.status}: ${errText.substring(0, 50)}`);
+                    }
+                    
                     const result = await response.json();
                     if (!result.data) return null;
 
@@ -197,12 +209,22 @@ async function performUpdate(force: boolean): Promise<string> {
                     schemaInstance._originUrl = url;
 
                     const typeMap = schemaInstance.getTypeMap();
-                    const entities = Object.keys(typeMap).filter(t => !t.startsWith('__') && !['Query', 'Mutation', 'Subscription'].includes(t));
-                    const hasMutation = !!typeMap['Mutation'];
+                    const mutationType = schemaInstance.getMutationType();
+                    const rootTypes = new Set([
+                        schemaInstance.getQueryType()?.name,
+                        mutationType?.name,
+                        schemaInstance.getSubscriptionType()?.name
+                    ].filter(Boolean));
+
+                    const entities = Object.keys(typeMap).filter(t => 
+                        !t.startsWith('__') && !rootTypes.has(t)
+                    );
+
+                    const mutationNames = mutationType ? Object.keys(mutationType.getFields()) : [];
 
                     manifest.push({
                         endpoint: url,
-                        availableMutations: hasMutation ? ["Dynamic CRUD"] : [],
+                        availableMutations: mutationNames.length > 0 ? mutationNames : ['none'],
                         domainEntities: entities
                     });
 
@@ -389,9 +411,13 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
 
     if (!typeNames || typeNames.length === 0) {
         const manifest = (global as any).nodeManifest || [];
-        const body = manifest.map((m: any) => 
-            `🌐 NODE: ${m.endpoint}\n   ACTIONS: ${m.availableMutations.join(', ') || 'none'}\n   ENTITIES: ${m.domainEntities.join(', ')}`
-        ).join('\n\n');
+        const body = manifest.map((m: any) => {
+            const capabilities = (m.availableMutations && m.availableMutations.length > 0) 
+                ? m.availableMutations.join(', ') 
+                : 'Read Only';
+
+            return `🌐 NODE: ${m.endpoint}\n   CAPABILITIES: ${capabilities}\n   ENTITIES: ${m.domainEntities.join(', ')}`;
+        }).join('\n\n');
         return { content: [{ type: "text" as const, text: `FEDERATED SCHEMA OVERVIEW\n\n${body}` }] };
     }
 
@@ -544,28 +570,76 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
     res.end("Not Found");
 }
 
+// --- HELPER: Port retry logic ---
+async function tryListen(httpSrv: http.Server, port: number, maxRetries = 10, attempt = 0): Promise<number> {
+    return new Promise((resolve, reject) => {
+        if (attempt >= maxRetries) return reject(new Error(`Port range exhausted.`));
+
+        const onError = (err: any) => {
+            if (err.code === 'EADDRINUSE') {
+                console.error(`[WARN] Port ${port} is in use. Retrying on ${port + 1}...`);
+                httpSrv.removeListener('error', onError);
+                httpSrv.close(() => {
+                    resolve(tryListen(httpSrv, port + 1, maxRetries, attempt + 1));
+                });
+            } else {
+                reject(err);
+            }
+        };
+
+        httpSrv.once('error', onError);
+        httpSrv.listen(port, () => {
+            httpSrv.removeListener('error', onError);
+            console.error(`[SYSTEM] Federated Bridge v${getVersion()} (PID: ${process.pid}) active on port ${port}`);
+            console.error(`📡 SSE Endpoint: http://localhost:${port}/mcp`);
+            if (process.env.ENABLE_HTTP === "true") {
+                console.error(`🎨 GraphiQL: http://localhost:${port}/graphiql`);
+            }
+            resolve(port);
+        });
+    });
+}
+
 // --- SERVER LIFECYCLE ---
 async function main() {
+    process.stdin.on('end', () => {
+        console.error('[SYSTEM] Parent process closed. Shutting down...');
+        process.exit(0);
+    });
     const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
     
     if (process.env.ENABLE_HTTP !== "false" && !isInspector) {
         const httpSrv = http.createServer(handleHttpRequest);
-        httpSrv.on('error', (e: any) => {
-            if (e.code === 'EADDRINUSE') console.error(`[ERROR] Port ${env.MCP_PORT} already in use.`);
-        });
+        
+        const start = (port: number) => {
+            httpSrv.removeAllListeners('error');
+            httpSrv.removeAllListeners('listening');
+            
+            httpSrv.once('error', (e: any) => {
+                if (e.code === 'EADDRINUSE') {
+                    console.error(`[WARN] Port ${port} is in use. Trying ${port + 1}...`);
+                    httpSrv.close(() => start(port + 1));
+                } else {
+                    console.error(`[FATAL] Server error: ${e.message}`);
+                    process.exit(1);
+                }
+            });
 
-        httpSrv.listen(env.MCP_PORT, () => {
-            console.error(`[SYSTEM] Federated Bridge v${getVersion()} active on port ${env.MCP_PORT}`);
-            console.error(`📡 SSE Endpoint: http://localhost:${env.MCP_PORT}/mcp`);
-            if (process.env.ENABLE_HTTP === "true") {
-                console.error(`🎨 GraphiQL: http://localhost:${env.MCP_PORT}/graphiql`);
-            }
-        });
+            httpSrv.listen(port, () => {
+                const address = httpSrv.address();
+                const actualPort = typeof address === 'object' && address ? address.port : port;
+                console.error(`[SYSTEM] Federated Bridge active on port ${actualPort}`);
+                console.error(`📡 SSE Endpoint: http://localhost:${actualPort}/mcp`);
+            });
+        };
+
+        start(env.MCP_PORT);
     }
 
     const transport = new StdioServerTransport();
     await server.connect(transport);
 
+    console.error(`[BOOT] Initializing schema sync for: ${env.ENDPOINT}`);
     getSchema(true).catch(err => console.error(`[BOOT-WARN] Initial sync failed: ${err.message}`));
 }
 
