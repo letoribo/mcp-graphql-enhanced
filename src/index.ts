@@ -220,11 +220,20 @@ async function performUpdate(force: boolean): Promise<string> {
                         !t.startsWith('__') && !rootTypes.has(t)
                     );
 
-                    const mutationNames = mutationType ? Object.keys(mutationType.getFields()) : [];
+                    const mutationFields = schemaInstance.getMutationType()?.getFields();
+                    const mutationNames = mutationFields ? Object.keys(mutationFields) : [];
+
+                    let capabilities: string[] = [];
+
+                    if (env.ALLOW_MUTATIONS) {
+                        capabilities = mutationNames.length > 0 ? mutationNames : ["Read Only"];
+                    } else {
+                        capabilities = ["Read Only (Writes Disabled)"];
+                    }
 
                     manifest.push({
                         endpoint: url,
-                        availableMutations: mutationNames.length > 0 ? mutationNames : ['none'],
+                        availableMutations: capabilities,
                         domainEntities: entities
                     });
 
@@ -412,13 +421,23 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
     if (!typeNames || typeNames.length === 0) {
         const manifest = (global as any).nodeManifest || [];
         const body = manifest.map((m: any) => {
-            const capabilities = (m.availableMutations && m.availableMutations.length > 0) 
+            const capabilities = (Array.isArray(m.availableMutations) && m.availableMutations.length > 0) 
                 ? m.availableMutations.join(', ') 
                 : 'Read Only';
 
-            return `🌐 NODE: ${m.endpoint}\n   CAPABILITIES: ${capabilities}\n   ENTITIES: ${m.domainEntities.join(', ')}`;
+            return [
+                `🌐 NODE: ${m.endpoint}`,
+                `   CAPABILITIES: ${capabilities}`,
+                `   ENTITIES: ${m.domainEntities.join(', ')}`
+            ].join('\n');
         }).join('\n\n');
-        return { content: [{ type: "text" as const, text: `FEDERATED SCHEMA OVERVIEW\n\n${body}` }] };
+        
+        return { 
+            content: [{ 
+                type: "text" as const, 
+                text: `FEDERATED SCHEMA OVERVIEW\n\n${body}` 
+            }] 
+        };
     }
 
     const resolution: any = {};
