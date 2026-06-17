@@ -589,36 +589,6 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
     res.end("Not Found");
 }
 
-// --- HELPER: Port retry logic ---
-async function tryListen(httpSrv: http.Server, port: number, maxRetries = 10, attempt = 0): Promise<number> {
-    return new Promise((resolve, reject) => {
-        if (attempt >= maxRetries) return reject(new Error(`Port range exhausted.`));
-
-        const onError = (err: any) => {
-            if (err.code === 'EADDRINUSE') {
-                console.error(`[WARN] Port ${port} is in use. Retrying on ${port + 1}...`);
-                httpSrv.removeListener('error', onError);
-                httpSrv.close(() => {
-                    resolve(tryListen(httpSrv, port + 1, maxRetries, attempt + 1));
-                });
-            } else {
-                reject(err);
-            }
-        };
-
-        httpSrv.once('error', onError);
-        httpSrv.listen(port, () => {
-            httpSrv.removeListener('error', onError);
-            console.error(`[SYSTEM] Federated Bridge v${getVersion()} (PID: ${process.pid}) active on port ${port}`);
-            console.error(`📡 SSE Endpoint: http://localhost:${port}/mcp`);
-            if (process.env.ENABLE_HTTP === "true") {
-                console.error(`🎨 GraphiQL: http://localhost:${port}/graphiql`);
-            }
-            resolve(port);
-        });
-    });
-}
-
 // --- SERVER LIFECYCLE ---
 async function main() {
     process.stdin.on('end', () => {
@@ -649,6 +619,9 @@ async function main() {
                 const actualPort = typeof address === 'object' && address ? address.port : port;
                 console.error(`[SYSTEM] Federated Bridge active on port ${actualPort}`);
                 console.error(`📡 SSE Endpoint: http://localhost:${actualPort}/mcp`);
+                if (process.env.ENABLE_HTTP === "true") {
+                    console.error(`🎨 GraphiQL: http://localhost:${actualPort}/graphiql`);
+                }
             });
         };
 
