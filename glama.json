@@ -1,4 +1,44 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "maintainers": ["letoribo"]
+  "maintainers": ["letoribo"],
+  "name": "mcp-graphql-enhanced",
+  "description": "Enhanced MCP server for GraphQL with filtered introspection and full variable support.",
+  "attributes": ["hosting:local-only"],
+  "transport": {
+    "type": "sse",
+    "command": "npx",
+    "args": ["-y", "@letoribo/mcp-graphql-enhanced@latest"]
+  },
+  "tools": [
+    {
+      "name": "introspect-schema",
+      "description": "Fetch filtered GraphQL schema by type names"
+    },
+    {
+      "name": "query-graphql",
+      "description": "Execute GraphQL queries with variables and headers"
+    }
+  ],
+  "resources": [
+    {
+      "name": "graphql-schema",
+      "description": "GraphQL schema as a resource"
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "required": ["ENDPOINT"],
+    "properties": {
+      "ENDPOINT": {
+        "type": "string",
+        "description": "GraphQL endpoint URL",
+        "default": "https://mcp-discord.vercel.app/api/graphiql"
+      },
+      "HEADERS": {
+        "type": "string",
+        "description": "JSON string of headers",
+        "default": "{}"
+      }
+    }
+  }
 }
