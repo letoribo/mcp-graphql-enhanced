@@ -502,6 +502,28 @@ registerTool(
 // --- PROMPT REGISTRY ---
 registerPrompt(server, "system-health", "Check status of all nodes", "Perform a simple __typename query on all endpoints.");
 
+let sessionMeta: Record<string, any> = {};
+
+function updateSession(params: any) {
+    if (params?._meta) {
+        // Мы просто копируем всё, что прислал клиент в _meta.
+        // Если клиент прислал версию и нет serverState — мы не будем его придумывать.
+        sessionMeta = { ...params._meta };
+    }
+}
+
+function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 200) {
+    const responseBody: any = { ...data };
+    
+    // Добавляем _meta только если мы уже получили информацию от клиента
+    if (Object.keys(sessionMeta).length > 0) {
+        responseBody._meta = sessionMeta;
+    }
+
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(responseBody));
+}
+
 // --- HTTP ADAPTER FOR GRAPHIQL & SSE ---
 async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -524,6 +546,7 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
             let requestId: any = null;
             try {
                 const payload = JSON.parse(body);
+                updateSession(payload.params);
 
                 if (!payload.method && payload.query) {
                     const handler = toolHandlers.get("query-graphql");
@@ -535,14 +558,12 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                         
                         const resultText = mcpResult.content[0].text;
                         if (mcpResult.isError || resultText.startsWith('❌')) {
-                            res.writeHead(400, { 'Content-Type': 'application/json' });
-                            return res.end(JSON.stringify({ errors: [{ message: resultText }] }));
+                            sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
                         }
                         const parsed = JSON.parse(resultText);
 
-                        res.writeHead(200, { 'Content-Type': 'application/json' });
                         const graphQLResponse = parsed.data ? parsed : { data: parsed };
-                        return res.end(JSON.stringify(graphQLResponse));
+                        return sendJsonResponse(res, graphQLResponse);
                     }
                 }
 
@@ -550,12 +571,11 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                 requestId = id;
 
                 if (method === "tools/list" || method === "list-tools") {
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ 
+                    return sendJsonResponse(res, { 
                         jsonrpc: '2.0', 
                         id: requestId, 
                         result: { tools: registeredToolsMetadata } 
-                    }));
+                    });
                 }
 
                 const target = (method === "call-tool" || method === "tools/call") ? params.name : method;
@@ -563,24 +583,21 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
                 const handler = toolHandlers.get(target);
                 if (!handler) {
-                    res.writeHead(404);
-                    return res.end(JSON.stringify({ 
+                    return sendJsonResponse(res, { 
                         jsonrpc: '2.0', 
                         id: requestId, 
                         error: { code: -32601, message: `Method ${target} not found` } 
-                    }));
+                    });
                 }
 
                 const result = await handler(args);
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ jsonrpc: '2.0', id, result }));
+                return sendJsonResponse(res, { jsonrpc: '2.0', id: requestId, result });
             } catch (e: any) {
-                res.writeHead(500);
-                res.end(JSON.stringify({ 
+                return sendJsonResponse(res, { 
                     jsonrpc: '2.0', 
                     id: requestId, 
                     error: { message: e.message } 
-                }));
+                }, 500);
             }
         });
         return;
