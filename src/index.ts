@@ -506,8 +506,6 @@ let sessionMeta: Record<string, any> = {};
 
 function updateSession(params: any) {
     if (params?._meta) {
-        // Мы просто копируем всё, что прислал клиент в _meta.
-        // Если клиент прислал версию и нет serverState — мы не будем его придумывать.
         sessionMeta = { ...params._meta };
     }
 }
@@ -515,7 +513,6 @@ function updateSession(params: any) {
 function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 200) {
     const responseBody: any = { ...data };
     
-    // Добавляем _meta только если мы уже получили информацию от клиента
     if (Object.keys(sessionMeta).length > 0) {
         responseBody._meta = sessionMeta;
     }
