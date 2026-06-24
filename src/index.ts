@@ -401,9 +401,9 @@ registerTool(
     "Security: Inherits environment-based authentication. " +
     "Returns: A JSON object containing the execution result ('data') or a list of 'errors' in case of failure.",
     {
-        query: z.string().describe("The GraphQL query or mutation string."),
-        variables: z.string().optional().describe("JSON string of variables for the operation."),
-        headers: z.string().optional().describe("JSON string of extra HTTP headers for the request."),
+        query: z.string().describe("The GraphQL query or mutation string. Example: 'query { guilds { id name } }'."),
+        variables: z.string().optional().describe("JSON stringified object of variables. Example: '{\"id\": \"123\"}'."),
+        headers: z.string().optional().describe("JSON stringified object of extra HTTP headers for the request."),
     }, 
     queryGraphqlHandler
 );
@@ -485,16 +485,18 @@ registerTool(
     toolHandlers, 
     registeredToolsMetadata, 
     "introspect-schema", 
-    "Retrieve the full GraphQL schema and type definitions. " +
-    "READ-ONLY: This tool is strictly non-destructive. It fetches schema metadata and performs internal conflict resolution " +
-    "based on timestamps in memory. It does not modify, delete, or create data on the remote GraphQL endpoint. " +
-    "Use this for initial discovery and schema analysis before calling 'query-graphql'. " +
-    "Returns a structured JSON object containing type definitions and field specifications. " +
-    "If 'typeNames' is provided, it restricts output to those specific types. " +
-    "CAUTION: For large-scale schemas (e.g., GitHub GraphQL API or @neo4j/graphql models), the response may be truncated or empty " +
-    "if requested without filtering. Always use 'typeNames' to target specific segments when working with complex production schemas.",
+    "Retrieve GraphQL schema details or system manifest. " +
+    "READ-ONLY: Non-destructive metadata discovery. " +
+    "Usage: " +
+    "1. If 'typeNames' is provided: Returns the full SDL (Schema Definition Language) for the requested types, including fields and relations. " +
+    "2. If 'typeNames' is omitted: Returns a Federated Manifest—a high-level summary of connected nodes, their capabilities, and available domain entities (not the full schema). " +
+    "Use this to navigate the federated graph topology before executing queries.",
     {
-        typeNames: z.array(z.string()).optional().describe("List of specific GraphQL type names to introspect. If omitted, the full schema is returned (use with caution on large APIs)."),
+        typeNames: z.array(z.string()).optional().describe(
+            "List of specific GraphQL type names to introspect. " +
+            "If provided, returns the detailed SDL definitions for these types. " +
+            "If omitted, returns a system-wide Federated Manifest overview."
+        ),
     }, 
     introspectHandler
 );
