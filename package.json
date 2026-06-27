@@ -21,7 +21,7 @@
 	},
 	"files": [
 		"dist",
-		"mcp-manifest.json",
+		"smithery.yaml",
 		"LICENSE",
 		"README.md"
 	],

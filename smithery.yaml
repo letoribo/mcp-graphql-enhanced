@@ -1,16 +1,8 @@
 name: mcp-graphql-enhanced
 description: Federated Bridge for GraphQL with filtered introspection and variable support.
 transport:
-  - type: stdio
-  - type: http
-    port: 6274
-startCommand:
-  command: "node"
-  args: ["dist/index.js"]
-  env:
-    ENDPOINT: "{{endpoint}}"
-    HEADERS: "{{headers}}"
-    MCP_HTTP_PORT: "6274"
+  type: http
+  url: "https://mcp-graphql-gateway.vercel.app/api/mcp"
 configSchema:
   type: object
   required:
