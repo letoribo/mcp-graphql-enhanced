@@ -1,6 +1,6 @@
 # mcp-graphql-enhanced
 [![Glama](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced/badge)](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)
-[![mcp-graphql-enhanced MCP server](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced/badges/score.svg)](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced)
+[![mcp-graphql-enhanced MCP server](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced/badges/score.svg)](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced)[![smithery badge](https://smithery.ai/badge/letoribo/mcp-graphql-enhanced)](https://smithery.ai/servers/letoribo/mcp-graphql-enhanced)
 An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
 > Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
 
@@ -94,22 +94,69 @@ This ensures the server starts successfully even when the default is blocked. **
 To **force a specific port** (e.g., for guaranteed external firewall settings), you can still explicitly set the `MCP_PORT` environment variable:
 
 ### Testing the HTTP Endpoint
-
 You can test the endpoint using `curl` as long as the server is running (e.g., via `npm run dev`):
-
+#### Test the health check (assuming the server bound to the default or found the next available port)
 ```bash
-# Test the health check (assuming the server bound to the default or found the next available port)
 curl http://localhost:6274/health
+```
+#### Testing the JSON-RPC Transport
+```
+curl -X POST http://localhost:6274/mcp  \
+-H "Content-Type: application/json"  \
+-d '{
+  "jsonrpc":"2.0",
+  "method":"tools/list",
+  "params":{},
+  "id":1
+}'
 
-# Example: Test the query tool via JSON-RPC (using port 6275 if 6274 was busy)
+curl -X POST http://localhost:6274/mcp \
+-H "Content-Type: application/json" \
+-d '{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "introspect-schema",
+    "arguments": {}
+  },
+  "id": 2
+}'
+
+curl -X POST http://localhost:6274/mcp \
+-H "Content-Type: application/json" \
+-d '{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "introspect-schema",
+    "arguments": {
+      "typeNames": ["User", "Message"]
+    }
+  },
+  "id": 3
+}'
+
+curl -X POST http://localhost:6274/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "query-graphql",
+      "arguments": {
+        "query": "{ guildChannels(guild_id: \"1312302100125843476\") { name id topic } }"
+      }
+    },
+    "id": 4
+  }'
+```
+ (using port 6275 if 6274 was busy)
+```
 curl -X POST http://localhost:6275/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"query-graphql","params":{"query":"query { __typename }"},"id":1}'
+```
 
-## 🔍 Filtered Introspection
-Avoid 50k-line schema dumps. Ask for only what you need:
-`@introspect-schema typeNames ["Query", "User"]`
-## 🔍 Debug & Inspect
-Use the official MCP Inspector to test your server live:
-```bash
+#### 🔍 Use the official MCP Inspector to test your server live:
+```
 npx @modelcontextprotocol/inspector \
   -e ENDPOINT=https://api.example.com/graphql \
   npx @letoribo/mcp-graphql-enhanced
@@ -131,26 +178,46 @@ npx @modelcontextprotocol/inspector \
 - `auto` (default): Automatically enables HTTP only when running in MCP Inspector...
 - `true`: Always enable HTTP server
 - `false`: Disable HTTP server completely
-### Examples
+### 🚀 Examples
+#### 1. Quick Start
+Basic startup using the default endpoint.
 ```bash
-# Basic usage
-ENDPOINT=http://localhost:3000/graphql npx @letoribo/mcp-graphql-enhanced
-# With auth header
+npx @letoribo/mcp-graphql-enhanced
+```
+#### 2. Configuration & Authentication
+Running with custom headers (e.g., for API keys or Bearer tokens).
+```
 ENDPOINT=https://api.example.com/graphql \
 HEADERS='{"Authorization":"Bearer xyz"}' \
 npx @letoribo/mcp-graphql-enhanced
-# Enable mutations
-ENDPOINT=http://localhost:3000/graphql \
-ALLOW_MUTATIONS=true \
-npx @letoribo/mcp-graphql-enhanced
-# Use local schema file
+```
+#### 3. Advanced Integration
+Using a local .graphql file If you want to work with a local schema without querying the API directly.
+```
 ENDPOINT=http://localhost:3000/graphql \
 SCHEMA=./schema.graphql \
 npx @letoribo/mcp-graphql-enhanced
+```
+Enabling Mutations (Writes) Mutations are disabled by default for security. To enable them:
+```
+ENDPOINT=http://localhost:3000/graphql \
+ALLOW_MUTATIONS=true \
+npx @letoribo/mcp-graphql-enhanced
+```
+Multi-Node Architecture (Federation) Aggregating data from multiple sources into a single unified graph.
+```
+ENDPOINT=https://mcp-discord.vercel.app/api/graphiql,https://mcp-neo4j-discord.vercel.app/api/graphiql \
+npx @letoribo/mcp-graphql-enhanced
+```
+#### 4. Customizing Environment
+Example of port configuration and development mode settings.
+```
 # Change the HTTP port
 MCP_PORT=8080 npx @letoribo/mcp-graphql-enhanced
+
 # Disable HTTP transport (fastest, recommended for Claude Desktop)
 ENABLE_HTTP=false npx @letoribo/mcp-graphql-enhanced
+
 # Test the surgical precision and the IDE immediately:
 ENDPOINT=https://api.github.com/graphql \
 HEADERS='{"Authorization":"Bearer YOUR_GITHUB_TOKEN"}' \
@@ -159,6 +226,29 @@ npx @letoribo/mcp-graphql-enhanced
 
 # Then visit http://localhost:6274/graphiql
 ```
+#### 5. Integration via Smithery CLI
+Smithery provides a powerful way to manage your MCP servers, handle authentication, and interact with tools directly from your terminal
+```
+# 1. Install Smithery CLI
+npm install -g smithery
+
+# 2. Create a namespace
+smithery namespace create {your-namespace}
+
+# 3. Add the server
+smithery mcp add letoribo/mcp-graphql-enhanced
+
+# 4. Interact with tools
+smithery tool list {connection}
+smithery tool call {connection} {tool_name} '{"key": "value"}'
+
+E.g.
+smithery tool call letoribo-mcp-graphql-enhanced introspect-schema
+smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["Guild", "Message", "User"]}'
+smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ guildChannels(guild_id: \"1312302100125843476\") { name id topic } }"}'
+```
+Note on HTTP/Remote Transport: The Smithery integration uses the server's HTTP/JSON-RPC endpoint as a lightweight bridge. This approach is optimized for network efficiency and external connectivity, providing a streamlined experience compared to the standard stdio transport.
+
 ### 🖥️ Claude Desktop Configuration Examples
 You can connect Claude Desktop to your GraphQL API using either the npx package (recommended for simplicity) or the Docker image (ideal for reproducibility and isolation).
 ### ✅ Option 1: Using npx

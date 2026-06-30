@@ -533,9 +533,21 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
     const url = new URL(req.url || '', `http://${req.headers.host}`);
 
-    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/graphiql')) {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        return res.end(renderGraphiQL(`http://localhost:${env.MCP_PORT}/mcp`, env.HEADERS));
+    if (req.method === 'GET') {
+        switch (url.pathname) {
+            case '/':
+            case '/graphiql':
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                return res.end(renderGraphiQL(`http://localhost:${env.MCP_PORT}/mcp`, env.HEADERS));
+            
+            case '/health':
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ status: 'ok', version: getVersion() }));
+
+            default:
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: 'Not Found' }));
+        }
     }
 
     if (url.pathname === '/mcp' && req.method === 'POST') {
