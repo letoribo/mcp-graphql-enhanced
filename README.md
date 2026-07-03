@@ -19,7 +19,7 @@ This is the best place to share your feedback, report issues, or suggest new "en
 * ✅ **Dynamic headers** — pass `Authorization`, `X-API-Key`, etc., via tool arguments (no config restarts)
 * ✅ **Robust variables parsing** — fixes `“Query variables must be a null or an object”` error
 * ✅ **Filtered introspection** — request only specific types (e.g., `typeNames: ["Query", "User"]`) to reduce LLM context noise
-* ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Cursor**, **Glama**
+* ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Groq Desktop**, **Glama** and any standard MCP client
 * ✅ **Secure by default** — mutations disabled unless explicitly enabled
 * ✅ **Dynamic Schema Evolution** — Smart diagnostics and gap analysis for servers that regenerate GraphQL types on-the-fly (like Neo4j).
 * ✅ **Deep Observability** — Automatic Cypher extraction and cleaning from GraphQL extensions.
@@ -214,9 +214,6 @@ Example of port configuration and development mode settings.
 ```
 # Change the HTTP port
 MCP_PORT=8080 npx @letoribo/mcp-graphql-enhanced
-
-# Disable HTTP transport (fastest, recommended for Claude Desktop)
-ENABLE_HTTP=false npx @letoribo/mcp-graphql-enhanced
 
 # Test the surgical precision and the IDE immediately:
 ENDPOINT=https://api.github.com/graphql \

@@ -59,9 +59,9 @@ const EnvSchema = z.object({
         }),
     SCHEMA: z.string().optional(),
     MCP_PORT: z.preprocess(
-        (val: unknown) => (val ? parseInt(val as string) : 6274),
-        z.number().int().min(1024).max(65535)
-    ).default(6274),
+        (val: unknown) => (val ? parseInt(val as string) : undefined),
+        z.number().int().min(1024).max(65535).optional()
+    ).default(false),
     ENABLE_HTTP: z
         .enum(["true", "false", "auto"])
         .transform((value: string) => {
@@ -624,8 +624,11 @@ async function main() {
         process.exit(0);
     });
     const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
+
+    const isAuto = typeof env.ENABLE_HTTP === 'string' && env.ENABLE_HTTP === "auto";
+    const shouldStartHttp = env.ENABLE_HTTP === true || (isAuto && !!env.MCP_PORT);
     
-    if (process.env.ENABLE_HTTP !== "false" && !isInspector) {
+    if (shouldStartHttp && !isInspector) {
         const httpSrv = http.createServer(handleHttpRequest);
         
         const start = (port: number) => {
@@ -653,7 +656,7 @@ async function main() {
             });
         };
 
-        start(env.MCP_PORT);
+        start(env.MCP_PORT|| 6274);
     }
 
     const transport = new StdioServerTransport();
