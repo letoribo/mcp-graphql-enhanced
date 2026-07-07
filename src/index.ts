@@ -297,7 +297,18 @@ const registeredToolsMetadata: any[] = [];
  * Tool: query-graphql
  * Broadcasts queries to all nodes and merges results with universal deduplication.
  */
-const queryGraphqlHandler = async ({ query, variables, headers }: { query: string, variables?: string, headers?: string }) => {
+const queryGraphqlHandler = async ({ 
+    query, 
+    variables, 
+    headers, 
+    _request_meta 
+}: { 
+    query: string, 
+    variables?: string, 
+    headers?: string, 
+    _request_meta?: { host: string }
+}) => {
+    const host = _request_meta?.host || "unknown-host";
     try {
         const parsedQuery = parse(query);
         const hasMutation = parsedQuery.definitions.some(
@@ -317,7 +328,11 @@ const queryGraphqlHandler = async ({ query, variables, headers }: { query: strin
             endpoints.map(async (url) => { 
                 const response = await fetch(url, {
                     method: "POST",
-                    headers: fetchHeaders,
+                    headers: {
+                        ...fetchHeaders,
+                        "X-Proxy-Host": host,
+                        "X-Proxy-Source": "mcp-graphql-enhanced"
+                    },
                     body: JSON.stringify({ query, variables: fetchVariables }),
                     signal: AbortSignal.timeout(15000)
                 });
@@ -512,13 +527,8 @@ function updateSession(params: any) {
     }
 }
 
-function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 200, extraMeta: any = null) {
+function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 200) {
     const responseBody: any = { ...data };
-
-    // Добавляем ключ только если есть реальные метаданные
-    if (extraMeta && Object.keys(extraMeta).length > 0) {
-        responseBody._request_meta = extraMeta;
-    }
     
     if (Object.keys(sessionMeta).length > 0) {
         responseBody._meta = sessionMeta;
@@ -606,9 +616,15 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                     });
                 }
 
-                const result = await handler(args);
                 const requestHost = req.headers.host;
-                return sendJsonResponse(res, { jsonrpc: '2.0', id: requestId, result }, 200, { host: requestHost });
+                const enrichedArgs = { 
+                    ...args, 
+                    _request_meta: { host: requestHost }
+                };
+
+                const result = await handler(enrichedArgs);
+                
+                return sendJsonResponse(res, { jsonrpc: '2.0', id: requestId, result });
             } catch (e: any) {
                 return sendJsonResponse(res, { 
                     jsonrpc: '2.0', 
