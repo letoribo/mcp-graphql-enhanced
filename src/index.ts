@@ -328,12 +328,14 @@ const queryGraphqlHandler = async ({
             endpoints.map(async (url) => { 
                 const response = await fetch(url, {
                     method: "POST",
-                    headers: {
-                        ...fetchHeaders,
-                        "X-Proxy-Host": host,
-                        "X-Proxy-Source": "mcp-graphql-enhanced"
-                    },
-                    body: JSON.stringify({ query, variables: fetchVariables }),
+                    headers: fetchHeaders,
+                    body: JSON.stringify({ 
+                        query, 
+                        variables: { 
+                            ...fetchVariables,
+                            _proxyMeta: { host, source: "mcp-graphql-enhanced" } 
+                        }
+                    }),
                     signal: AbortSignal.timeout(15000)
                 });
                 
