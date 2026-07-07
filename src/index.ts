@@ -512,8 +512,13 @@ function updateSession(params: any) {
     }
 }
 
-function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 200) {
+function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 200, extraMeta: any = null) {
     const responseBody: any = { ...data };
+
+    // Добавляем ключ только если есть реальные метаданные
+    if (extraMeta && Object.keys(extraMeta).length > 0) {
+        responseBody._request_meta = extraMeta;
+    }
     
     if (Object.keys(sessionMeta).length > 0) {
         responseBody._meta = sessionMeta;
@@ -602,7 +607,8 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                 }
 
                 const result = await handler(args);
-                return sendJsonResponse(res, { jsonrpc: '2.0', id: requestId, result });
+                const requestHost = req.headers.host;
+                return sendJsonResponse(res, { jsonrpc: '2.0', id: requestId, result }, 200, { host: requestHost });
             } catch (e: any) {
                 return sendJsonResponse(res, { 
                     jsonrpc: '2.0', 
