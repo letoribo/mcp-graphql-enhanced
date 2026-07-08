@@ -683,8 +683,12 @@ async function main() {
         start(env.MCP_PORT|| 6274);
     }
 
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    if (!shouldStartHttp) {
+        const transport = new StdioServerTransport();
+        await server.connect(transport);
+    } else {
+        console.error("[SYSTEM] HTTP mode active, skipping Stdio transport to prevent shutdown.");
+    }
 
     console.error(`[BOOT] Initializing schema sync for: ${env.ENDPOINT}`);
     getSchema(true).catch(err => console.error(`[BOOT-WARN] Initial sync failed: ${err.message}`));
