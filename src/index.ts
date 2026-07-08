@@ -643,14 +643,17 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 
 // --- SERVER LIFECYCLE ---
 async function main() {
-    process.stdin.on('end', () => {
-        console.error('[SYSTEM] Parent process closed. Shutting down...');
-        process.exit(0);
-    });
     const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
 
     const isAuto = typeof env.ENABLE_HTTP === 'string' && env.ENABLE_HTTP === "auto";
     const shouldStartHttp = env.ENABLE_HTTP === true || (isAuto && !!env.MCP_PORT);
+    
+    if (!shouldStartHttp) {
+        process.stdin.on('end', () => {
+            console.error('[SYSTEM] Parent process closed. Shutting down...');
+            process.exit(0);
+        });
+    }
     
     if (shouldStartHttp && !isInspector) {
         const httpSrv = http.createServer(handleHttpRequest);
