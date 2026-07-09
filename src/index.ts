@@ -571,69 +571,78 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
         let body = '';
         req.on('data', chunk => { body += chunk; });
         req.on('end', async () => {
-            let requestId: any = null;
+            let payload: any;
             try {
-                const payload = JSON.parse(body);
-                updateSession(payload.params);
-
-                if (!payload.method && payload.query) {
-                    const handler = toolHandlers.get("query-graphql");
-                    if (handler) {
-                        const mcpResult = await handler({ 
-                            query: payload.query, 
-                            variables: payload.variables 
-                        });
-                        
-                        const resultText = mcpResult.content[0].text;
-                        if (mcpResult.isError || resultText.startsWith('❌')) {
-                            sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
-                        }
-                        const parsed = JSON.parse(resultText);
-
-                        const graphQLResponse = parsed.data ? parsed : { data: parsed };
-                        return sendJsonResponse(res, graphQLResponse);
-                    }
-                }
-
-                const { method, id, params } = payload;
-                requestId = id;
-
-                if (method === "tools/list" || method === "list-tools") {
-                    return sendJsonResponse(res, { 
-                        jsonrpc: '2.0', 
-                        id: requestId, 
-                        result: { tools: registeredToolsMetadata } 
-                    });
-                }
-
-                const target = (method === "call-tool" || method === "tools/call") ? params.name : method;
-                const args = (method === "call-tool" || method === "tools/call") ? params.arguments : params;
-
-                const handler = toolHandlers.get(target);
-                if (!handler) {
-                    return sendJsonResponse(res, { 
-                        jsonrpc: '2.0', 
-                        id: requestId, 
-                        error: { code: -32601, message: `Method ${target} not found` } 
-                    });
-                }
-
-                const requestHost = req.headers.host;
-                const enrichedArgs = { 
-                    ...args, 
-                    _request_meta: { host: requestHost }
-                };
-
-                const result = await handler(enrichedArgs);
-                
-                return sendJsonResponse(res, { jsonrpc: '2.0', id: requestId, result });
+                payload = JSON.parse(body);
             } catch (e: any) {
                 return sendJsonResponse(res, { 
                     jsonrpc: '2.0', 
-                    id: requestId, 
                     error: { message: e.message } 
                 }, 500);
             }
+
+            const { method, id, params } = payload;
+            if (method === "initialize") {
+                return sendJsonResponse(res, {
+                    jsonrpc: '2.0',
+                    id,
+                    result: {
+                        protocolVersion: "2025-11-25",
+                        capabilities: { tools: {}, prompts: {} },
+                        serverInfo: { name: env.NAME, version: getVersion() }
+                    }
+                });
+            }
+            updateSession(payload.params);
+
+            if (!payload.method && payload.query) {
+                const handler = toolHandlers.get("query-graphql");
+                if (handler) {
+                    const mcpResult = await handler({ 
+                        query: payload.query, 
+                        variables: payload.variables 
+                    });
+                    
+                    const resultText = mcpResult.content[0].text;
+                    if (mcpResult.isError || resultText.startsWith('❌')) {
+                        sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
+                    }
+                    const parsed = JSON.parse(resultText);
+
+                    const graphQLResponse = parsed.data ? parsed : { data: parsed };
+                    return sendJsonResponse(res, graphQLResponse);
+                }
+            }               
+
+            if (method === "tools/list" || method === "list-tools") {
+                return sendJsonResponse(res, { 
+                    jsonrpc: '2.0', 
+                    id, 
+                    result: { tools: registeredToolsMetadata } 
+                });
+            }
+
+            const target = (method === "call-tool" || method === "tools/call") ? params.name : method;
+            const args = (method === "call-tool" || method === "tools/call") ? params.arguments : params;
+
+            const handler = toolHandlers.get(target);
+            if (!handler) {
+                return sendJsonResponse(res, { 
+                    jsonrpc: '2.0', 
+                    id, 
+                    error: { code: -32601, message: `Method ${target} not found` } 
+                });
+            }
+
+            const requestHost = req.headers.host;
+            const enrichedArgs = { 
+                ...args, 
+                _request_meta: { host: requestHost }
+            };
+
+            const result = await handler(enrichedArgs);
+            
+            return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
         });
         return;
     }
