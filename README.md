@@ -18,7 +18,7 @@ This is the best place to share your feedback, report issues, or suggest new "en
 * ✅ **Dual Transport** — Supports both **STDIO** (for local CLI/client tools) and **HTTP/JSON-RPC** (for external/browser clients).
 * ✅ **Dynamic headers** — pass `Authorization`, `X-API-Key`, etc., via tool arguments (no config restarts)
 * ✅ **Robust variables parsing** — fixes `“Query variables must be a null or an object”` error
-* ✅ **Filtered introspection** — request only specific types (e.g., `typeNames: ["Query", "User"]`) to reduce LLM context noise
+* ✅ **Smart introspection** — supports filtered requests (via typeNames) and recursive depth control (via typeDepth) to minimize LLM context noise and optimize schema exploration.
 * ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Groq Desktop**, **Glama** and any standard MCP client
 * ✅ **Secure by default** — mutations disabled unless explicitly enabled
 * ✅ **Dynamic Schema Evolution** — Smart diagnostics and gap analysis for servers that regenerate GraphQL types on-the-fly (like Neo4j).
@@ -137,6 +137,21 @@ curl -X POST http://localhost:6274/mcp \
 }'
 
 curl -X POST http://localhost:6274/mcp \
+-H "Content-Type: application/json" \
+-d '{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "introspect-schema",
+    "arguments": {
+      "typeNames": ["Message"],
+      "typeDepth": 4
+    }
+  },
+  "id": 4
+}'
+
+curl -X POST http://localhost:6274/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -147,7 +162,7 @@ curl -X POST http://localhost:6274/mcp \
         "query": "{ guildChannels(guild_id: \"1312302100125843476\") { name id topic } }"
       }
     },
-    "id": 4
+    "id": 5
   }'
 ```
  (using port 6275 if 6274 was busy)
@@ -301,9 +316,12 @@ If you’ve cloned the repo and built the project (npm run build → outputs to 
 - **graphql-schema**: The server exposes the GraphQL schema as a resource that clients can access. This is either the local schema file, a schema file hosted at a URL, or based on an introspection query.
 ## Available Tools
 The server provides two main tools:
-1. **introspect-schema**: This tool retrieves the GraphQL schema or a filtered subset (via typeNames). Use this first if you don't have access to the schema as a resource.
-This uses either the local schema file, a schema file hosted at a URL, or an introspection query.
-Filtered introspection (typeNames) is only available when using a live GraphQL endpoint (not with SCHEMA file or URL).
+1. **introspect-schema**: Retrieves the GraphQL schema or a subset. Use this first to understand the graph structure.
+  - **Arguments:**
+    - `typeNames` *(optional, array)*: List of specific types to introspect (e.g., `["User", "Message"]`). Reduces noise by returning only relevant parts of the graph.
+    - `typeDepth` *(optional, number)*: Controls the recursion level of nested fields (Default: `2`). 
+      > **Note:** `typeDepth` is only functional when `typeNames` is provided to narrow the scope.
+  - **Note:** Filtered introspection is only available when querying a live GraphQL endpoint.
 2. **query-graphql**: Execute GraphQL queries against the endpoint. By default, mutations are disabled unless `ALLOW_MUTATIONS` is set to `true`.
 ## Security Considerations
 Mutations are disabled by default to prevent unintended data changes. Always validate HEADERS and SCHEMA inputs in production. Use HTTPS endpoints and short-lived tokens where possible.

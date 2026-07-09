@@ -18,12 +18,13 @@ import { readFile } from "node:fs/promises";
 export async function introspectEndpoint(
   endpoint: string,
   headers?: Record<string, string>,
+  typeDepth: number = 2
 ) {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify({
-      query: getIntrospectionQuery(),
+      query: getIntrospectionQuery(getSafeIntrospectionOptions(typeDepth)),
     }),
   });
 
@@ -49,7 +50,7 @@ export async function introspectLocalSchema(path: string) {
  * parts of the graph to the agent, maintaining a stable context window.
  */
 
-export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string[]) {
+export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string[], depth: number = 2) {
   const result: Record<string, any> = {};
   
   // Cache root field maps to avoid repeated lookups during the loop
@@ -58,6 +59,39 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
   const mutationType = schema.getMutationType();
   const mutationFields = mutationType ? mutationType.getFields() : {};
 
+  function resolveField(type: any, currentDepth: number): any {
+    const namedType = type.ofType ? type.ofType : type;
+    
+    if (isScalarType(namedType) || currentDepth >= depth) {
+      return type.toString();
+    }
+
+    if (isObjectType(namedType) || isInterfaceType(namedType)) {
+      const fields = namedType.getFields();
+      const resolvedFields: any = {};
+      
+      for (const [name, field] of Object.entries(fields)) {
+        if (field.deprecationReason) continue;
+        resolvedFields[name] = {
+          type: field.type.toString(),
+          fields: resolveField(field.type, currentDepth + 1)
+        };
+      }
+      return resolvedFields;
+    }
+    return type.toString();
+  }
+
+  function formatArgs(args: readonly any[]) { // <-- добавили readonly
+    return args
+      .filter(arg => !arg.deprecationReason)
+      .map(arg => ({
+        name: arg.name,
+        type: arg.type.toString(),
+        description: arg.description,
+      }));
+  }
+  
   for (const name of typeNames) {
     // --- ROOT FIELD RESOLUTION ---
     // Check if the name refers to a root field (Query or Mutation) 
@@ -69,13 +103,8 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
         kind: queryFields[name] ? "QUERY_FIELD" : "MUTATION_FIELD",
         description: rootField.description,
         type: rootField.type.toString(),
-        args: rootField.args
-          .filter(arg => !arg.deprecationReason)
-          .map(arg => ({
-            name: arg.name,
-            type: arg.type.toString(),
-            description: arg.description,
-          }))
+        args: formatArgs(rootField.args),
+        nested: resolveField(rootField.type, 1)
       };
       continue; // Field found, move to next requested name
     }
@@ -97,13 +126,8 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
               {
                 type: field.type.toString(),
                 description: field.description,
-                args: field.args
-                  .filter(arg => !arg.deprecationReason)
-                  .map(arg => ({
-                    name: arg.name,
-                    type: arg.type.toString(),
-                    description: arg.description,
-                  }))
+                args: formatArgs(field.args),
+                nested: resolveField(field.type, 1)
               }
             ])
         )
@@ -141,28 +165,31 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
         kind: "SCALAR",
         description: type.description
       };
+    } else {
+      // FIX: Fallback for types that weren't caught by the explicit checks
+      // This ensures ProxyInfo and other "flat" objects are reported
+      result[name] = {
+        kind: "OBJECT",
+        description: (type as any).description || "",
+        fields: Object.fromEntries(
+          Object.entries((type as any).getFields?.() || {}).map(([fieldName, field]: any) => [
+              fieldName,
+              { type: field.type.toString() }
+          ])
+        )
+      };
     }
   }
 
   return result;
 }
 
-/**
- * Backwards compatibility helper for direct endpoint introspection
- */
-export async function introspectTypes(
-  endpoint: string,
-  headers: Record<string, string> = {},
-  typeNames: string[]
-) {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify({ query: getIntrospectionQuery() }),
-  });
-  const data = await response.json();
-  const schema = buildClientSchema(data.data);
-
-  const result = introspectSpecificTypes(schema, typeNames);
-  return JSON.stringify(result);
+export function getSafeIntrospectionOptions(depth: number = 2) {
+  return {
+    descriptions: true,
+    directiveIsRepeatable: false,
+    inputValueDeprecation: false,
+    schemaDescription: false,
+    typeDepth: depth,
+  } as any;
 }

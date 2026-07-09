@@ -13,6 +13,7 @@ import { checkDeprecatedArguments } from "./helpers/deprecation.js";
 import {
     introspectLocalSchema,
     introspectSpecificTypes,
+    getSafeIntrospectionOptions,
 } from "./helpers/introspection.js";
 import { registerTool } from "./helpers/tool-registry.js";
 import { registerPrompt } from "./helpers/prompt-registry.js";
@@ -110,7 +111,11 @@ let updatePromise: Promise<string> | null = null;
 /**
  * Schema Fetcher with dependency tracking
  */
-async function getSchema(force: boolean = false, requestedTypes?: string[]): Promise<string | GraphQLSchema> {
+async function getSchema(
+    force: boolean = false, 
+    requestedTypes?: string[], 
+    typeDepth: number = 2
+): Promise<string | GraphQLSchema> {
     if (isUpdating && updatePromise) {
         if (force || !cachedSDL) return await updatePromise;
         return cachedSDL;
@@ -128,7 +133,7 @@ async function getSchema(force: boolean = false, requestedTypes?: string[]): Pro
     if (force) schemaLoadError = null;
     if (schemaLoadError) throw schemaLoadError;
 
-    updatePromise = performUpdate(force);
+    updatePromise = performUpdate(force, typeDepth);
     
     try {
         if (force || !cachedSDL) {
@@ -144,7 +149,7 @@ async function getSchema(force: boolean = false, requestedTypes?: string[]): Pro
 /**
  * Federated Update: Orchestrates introspection across all endpoints
  */
-async function performUpdate(force: boolean): Promise<string> {
+async function performUpdate(force: boolean, typeDepth: number = 2): Promise<string> {
     isUpdating = true;
     const startTime = Date.now();
 
@@ -187,13 +192,7 @@ async function performUpdate(force: boolean): Promise<string> {
                             ...activeHeaders
                         },
                         body: JSON.stringify({ 
-                            query: getIntrospectionQuery({
-                                descriptions: false,
-                                directiveIsRepeatable: false,
-                                inputValueDeprecation: false,
-                                schemaDescription: false,
-                                typeDepth: 1,
-                            }) 
+                            query: getIntrospectionQuery(getSafeIntrospectionOptions(typeDepth))
                         }),
                     });
                     
@@ -429,8 +428,18 @@ registerTool(
  * Tool: introspect-schema
  * Provides a global view of all nodes and resolves type conflicts.
  */
-const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
-    await getSchema(false);
+const introspectHandler = async ({ typeNames, typeDepth = 2 }: { typeNames?: string[], typeDepth?: number }) => {
+    if (typeDepth && (!typeNames || typeNames.length === 0)) {
+        return {
+            content: [{
+                type: "text",
+                text: "⚠️ Hint: 'typeDepth' is only effective when specific 'typeNames' are provided. " +
+                      "Please provide 'typeNames' to explore nested fields with the requested depth.\n\n" +
+                      "Run without arguments to see the federated manifest."
+            }]
+        };
+    }
+    await getSchema(false, typeNames, typeDepth);
     if (cachedSchemas.length === 0) {
         return { content: [{ type: "text" as const, text: "❌ System is not initialized." }] };
     }
@@ -461,7 +470,7 @@ const introspectHandler = async ({ typeNames }: { typeNames?: string[] }) => {
     for (const name of typeNames) {
         const variants: any[] = [];
         for (const schema of cachedSchemas) {
-            const found = introspectSpecificTypes(schema, [name]);
+            const found = introspectSpecificTypes(schema, [name], typeDepth);
             if (found && found[name]) {
                 variants.push({ origin: schema._originUrl, data: found[name] });
             }
@@ -514,6 +523,7 @@ registerTool(
             "If provided, returns the detailed SDL definitions for these types. " +
             "If omitted, returns a system-wide Federated Manifest overview."
         ),
+        typeDepth: z.number().optional().default(2).describe("Depth of nested fields to retrieve (default: 2)"),
     }, 
     introspectHandler
 );

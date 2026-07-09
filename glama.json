@@ -7,7 +7,7 @@
   "transport": {
     "type": "sse",
     "command": "npx",
-    "args": ["-y", "@letoribo/mcp-graphql-enhanced@4.6.1"]
+    "args": ["-y", "@letoribo/mcp-graphql-enhanced@4.8.0"]
   },
   "tools": [
     {
