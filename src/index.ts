@@ -564,8 +564,14 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
         switch (url.pathname) {
             case '/':
             case '/graphiql':
-                res.writeHead(200, { 'Content-Type': 'text/html' });
-                return res.end(renderGraphiQL(`http://localhost:${env.MCP_PORT}/mcp`, env.HEADERS));
+                res.writeHead(200, { 'Content-Type': 'text/html' });   
+                const host = req.headers.host || '';                
+                const isLocal = host.includes('localhost') || host.includes('127.0.0.1');                
+                const endpoint = isLocal 
+                    ? `http://localhost:${env.MCP_PORT}/mcp` 
+                    : '/mcp';
+                    
+                return res.end(renderGraphiQL(endpoint, env.HEADERS));
             
             case '/health':
                 res.writeHead(200, { 'Content-Type': 'application/json' });
