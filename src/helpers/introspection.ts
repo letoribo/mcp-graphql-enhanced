@@ -167,16 +167,21 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
       };
     } else {
       // FIX: Fallback for types that weren't caught by the explicit checks
-      // This ensures ProxyInfo and other "flat" objects are reported
+      const fields = typeof (type as any).getFields === 'function' 
+        ? (type as any).getFields() 
+        : {};
+
       result[name] = {
         kind: "OBJECT",
-        description: (type as any).description || "",
-        fields: Object.fromEntries(
-          Object.entries((type as any).getFields?.() || {}).map(([fieldName, field]: any) => [
-              fieldName,
-              { type: field.type.toString() }
-          ])
-        )
+        description: (type as any).description || "Proxy/Federated Type",
+        fields: Object.keys(fields).length > 0 
+          ? Object.fromEntries(
+              Object.entries(fields).map(([fieldName, field]: any) => [
+                fieldName,
+                { type: field.type.toString() }
+              ])
+            )
+          : { "_debug": "Type found but no fields accessible via introspection" }
       };
     }
   }
