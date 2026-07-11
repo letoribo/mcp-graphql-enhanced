@@ -677,7 +677,6 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                 _request_meta: { host: requestHost }
             };
 
-            console.error(`[DEBUG] Calling handler for: ${target} with args: ${JSON.stringify(args)}`);
             const result = await handler(enrichedArgs);
             
             return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
