@@ -114,23 +114,24 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
     const type = schema.getType(name);
     if (!type) continue;
 
+
     if (isObjectType(type) || isInterfaceType(type)) {
+      const fields = type.getFields();
+
+      const fieldEntries = Object.entries(fields)
+        .map(([fieldName, field]: any) => {
+             return [fieldName, {
+               type: field.type?.toString() || "unknown",
+               description: field.description,
+               args: formatArgs(field.args || []),
+               nested: resolveField(field.type, 1)
+             }];
+        });
+
       result[name] = {
         kind: isInterfaceType(type) ? "INTERFACE" : "OBJECT",
         description: type.description,
-        fields: Object.fromEntries(
-          Object.entries(type.getFields())
-            .filter(([_, field]) => !field.deprecationReason)
-            .map(([fieldName, field]) => [
-              fieldName,
-              {
-                type: field.type.toString(),
-                description: field.description,
-                args: formatArgs(field.args),
-                nested: resolveField(field.type, 1)
-              }
-            ])
-        )
+        fields: Object.fromEntries(fieldEntries)
       };
     } else if (isInputObjectType(type)) {
       result[name] = {
@@ -138,7 +139,6 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
         description: type.description,
         fields: Object.fromEntries(
           Object.entries(type.getFields())
-            .filter(([_, field]) => !field.deprecationReason)
             .map(([fieldName, field]) => [
               fieldName,
               { type: field.type.toString(), description: field.description }
@@ -167,21 +167,16 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
       };
     } else {
       // FIX: Fallback for types that weren't caught by the explicit checks
-      const fields = typeof (type as any).getFields === 'function' 
-        ? (type as any).getFields() 
-        : {};
-
+      // This ensures ProxyInfo and other "flat" objects are reported
       result[name] = {
         kind: "OBJECT",
-        description: (type as any).description || "Proxy/Federated Type",
-        fields: Object.keys(fields).length > 0 
-          ? Object.fromEntries(
-              Object.entries(fields).map(([fieldName, field]: any) => [
-                fieldName,
-                { type: field.type.toString() }
-              ])
-            )
-          : { "_debug": "Type found but no fields accessible via introspection" }
+        description: (type as any).description || "",
+        fields: Object.fromEntries(
+          Object.entries((type as any).getFields?.() || {}).map(([fieldName, field]: any) => [
+              fieldName,
+              { type: field.type.toString() }
+          ])
+        )
       };
     }
   }

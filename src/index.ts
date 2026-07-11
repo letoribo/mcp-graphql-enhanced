@@ -477,7 +477,7 @@ const introspectHandler = async (args: { typeNames?: string[], typeDepth?: numbe
             ].join('\n');
         }).join('\n\n');
         
-        return { 
+        return {
             content: [{ 
                 type: "text" as const, 
                 text: `FEDERATED SCHEMA OVERVIEW\n\n${body}` 
@@ -486,10 +486,10 @@ const introspectHandler = async (args: { typeNames?: string[], typeDepth?: numbe
     }
 
     const resolution: any = {};
-    for (const name of typeNames) {
+    for (const name of (cleanTypeNames || [])) {
         const variants: any[] = [];
         for (const schema of cachedSchemas) {
-            const found = introspectSpecificTypes(schema, [name], typeDepth);
+            const found = introspectSpecificTypes(schema, [name], depth); 
             if (found && found[name]) {
                 variants.push({ origin: schema._originUrl, data: found[name] });
             }
@@ -519,7 +519,9 @@ const introspectHandler = async (args: { typeNames?: string[], typeDepth?: numbe
     return {
         content: [{
             type: "text" as const,
-            text: JSON.stringify(resolution, null, 2)
+            text: Object.keys(resolution).length > 0 
+                ? JSON.stringify(resolution, null, 2) 
+                : "No data found for requested types."
         }]
     };
 };
@@ -675,6 +677,7 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                 _request_meta: { host: requestHost }
             };
 
+            console.error(`[DEBUG] Calling handler for: ${target} with args: ${JSON.stringify(args)}`);
             const result = await handler(enrichedArgs);
             
             return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
