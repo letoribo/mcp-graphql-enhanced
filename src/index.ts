@@ -429,9 +429,21 @@ registerTool(
  * Provides a global view of all nodes and resolves type conflicts.
  */
 const introspectHandler = async (args: { typeNames?: string[], typeDepth?: number }) => {
-    const { typeNames, typeDepth } = args;
+    let { typeNames, typeDepth } = args;
+    let cleanTypeNames: string[] | undefined;
 
-    const hasTypeNames = typeNames !== undefined && typeNames.length > 0;
+    if (typeof typeNames === 'string') {
+        try {
+            const parsed = JSON.parse(typeNames);
+            cleanTypeNames = Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+            cleanTypeNames = [typeNames];
+        }
+    } else if (Array.isArray(typeNames)) {
+        cleanTypeNames = typeNames;
+    }
+
+    const hasTypeNames = cleanTypeNames !== undefined && cleanTypeNames.length > 0;
     const hasTypeDepth = typeDepth !== undefined;
 
     if (hasTypeDepth && !hasTypeNames) {
@@ -446,7 +458,7 @@ const introspectHandler = async (args: { typeNames?: string[], typeDepth?: numbe
     }
 
     const depth = typeDepth ?? 2;   
-    await getSchema(false, typeNames, depth);
+    await getSchema(false, cleanTypeNames, depth);
 
     if (cachedSchemas.length === 0) {
         return { content: [{ type: "text" as const, text: "❌ System is not initialized." }] };
