@@ -428,18 +428,26 @@ registerTool(
  * Tool: introspect-schema
  * Provides a global view of all nodes and resolves type conflicts.
  */
-const introspectHandler = async ({ typeNames, typeDepth = 2 }: { typeNames?: string[], typeDepth?: number }) => {
-    if (typeDepth && (!typeNames || typeNames.length === 0)) {
+const introspectHandler = async (args: { typeNames?: string[], typeDepth?: number }) => {
+    const { typeNames, typeDepth } = args;
+
+    const hasTypeNames = typeNames !== undefined && typeNames.length > 0;
+    const hasTypeDepth = typeDepth !== undefined;
+
+    if (hasTypeDepth && !hasTypeNames) {
         return {
             content: [{
                 type: "text",
                 text: "⚠️ Hint: 'typeDepth' is only effective when specific 'typeNames' are provided. " +
-                      "Please provide 'typeNames' to explore nested fields with the requested depth.\n\n" +
-                      "Run without arguments to see the federated manifest."
+                    "Please provide 'typeNames' to explore nested fields with the requested depth.\n\n" +
+                    "Run without arguments to see the federated manifest."
             }]
         };
     }
-    await getSchema(false, typeNames, typeDepth);
+
+    const depth = typeDepth ?? 2;   
+    await getSchema(false, typeNames, depth);
+
     if (cachedSchemas.length === 0) {
         return { content: [{ type: "text" as const, text: "❌ System is not initialized." }] };
     }
@@ -564,9 +572,9 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
         switch (url.pathname) {
             case '/':
             case '/graphiql':
-                res.writeHead(200, { 'Content-Type': 'text/html' });   
-                const host = req.headers.host || '';                
-                const isLocal = host.includes('localhost') || host.includes('127.0.0.1');                
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                const host = req.headers.host || ''; 
+                const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
                 const endpoint = isLocal 
                     ? `http://localhost:${env.MCP_PORT}/mcp` 
                     : '/mcp';

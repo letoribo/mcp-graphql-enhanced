@@ -47,7 +47,9 @@ export function registerTool(
             // Identify required fields by checking for ZodOptional or '?' in key
             required: Object.keys(schema).filter(key => {
                 const val = schema[key] as any;
-                return val?._def?.typeName !== 'ZodOptional' && !key.includes('?');
+                const isOptional = val?._def?.typeName === 'ZodOptional';
+                const isDefault = val?._def?.typeName === 'ZodDefault';
+                return !isOptional && !isDefault && !key.includes('?');
             })
         }
     });
