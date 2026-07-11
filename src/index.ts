@@ -117,15 +117,14 @@ async function getSchema(
     typeDepth: number = 2
 ): Promise<string | GraphQLSchema> {
     if (isUpdating && updatePromise) {
-        if (force || !cachedSDL) return await updatePromise;
-        return cachedSDL;
+        return await updatePromise;
     }
 
-    if (cachedSDL && !force) {
+    if (cachedSchemaObject && !force) {
         if (requestedTypes && cachedSchemas.length > 0) {
             const allTypes = new Set(cachedSchemas.flatMap(s => Object.keys(s.getTypeMap())));
             const missing = requestedTypes.filter(t => !allTypes.has(t));
-            if (missing.length > 0) return await (updatePromise = performUpdate(true));
+            if (missing.length > 0) return await performUpdate(true, typeDepth);
         }
         return cachedSchemaObject;
     }
@@ -134,12 +133,8 @@ async function getSchema(
     if (schemaLoadError) throw schemaLoadError;
 
     updatePromise = performUpdate(force, typeDepth);
-    
     try {
-        if (force || !cachedSDL) {
-            await updatePromise;
-            return cachedSchemaObject;
-        }
+        await updatePromise;
         return cachedSchemaObject;
     } finally {
         updatePromise = null;
@@ -429,6 +424,10 @@ registerTool(
  * Provides a global view of all nodes and resolves type conflicts.
  */
 const introspectHandler = async (args: { typeNames?: string[], typeDepth?: number }) => {
+    if (cachedSchemas.length === 0) {
+        await getSchema(true); 
+    }
+    
     let { typeNames, typeDepth } = args;
     let cleanTypeNames: string[] | undefined;
 
