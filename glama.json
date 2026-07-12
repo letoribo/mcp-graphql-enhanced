@@ -5,9 +5,9 @@
   "description": "Enhanced MCP server for GraphQL with filtered introspection and full variable support.",
   "attributes": ["hosting:local-only"],
   "transport": {
-    "type": "sse",
+    "type": "http",
     "command": "npx",
-    "args": ["-y", "@letoribo/mcp-graphql-enhanced@4.9.0"]
+    "args": ["-y", "@letoribo/mcp-graphql-enhanced@4.9.2"]
   },
   "tools": [
     {

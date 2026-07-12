@@ -449,9 +449,12 @@ const introspectHandler = async (args: { typeNames?: string[], typeDepth?: numbe
         return {
             content: [{
                 type: "text",
-                text: "⚠️ Hint: 'typeDepth' is only effective when specific 'typeNames' are provided. " +
-                    "Please provide 'typeNames' to explore nested fields with the requested depth.\n\n" +
-                    "Run without arguments to see the federated manifest."
+                text: `⚠️ Security/Performance Limit:\n\n` +
+                    `Applying 'typeDepth: ${typeDepth}' to the full schema is restricted to prevent context overflow and excessive load.\n\n` +
+                    "Logic:\n" +
+                    "1. 'typeDepth' controls the recursion limit for specific GraphQL types.\n" +
+                    "2. Without 'typeNames', the tool defaults to 'Federated Manifest' mode, where depth control is not applicable.\n\n" +
+                    "To fix: Either provide 'typeNames' to use the depth, or remove 'typeDepth' to view the manifest."
             }]
         };
     }
@@ -544,7 +547,7 @@ registerTool(
             "If provided, returns the detailed SDL definitions for these types. " +
             "If omitted, returns a system-wide Federated Manifest overview."
         ),
-        typeDepth: z.number().optional().default(2).describe("Depth of nested fields to retrieve (default: 2)"),
+        typeDepth: z.number().optional().describe("Depth of nested fields to retrieve (default: 2)"),
     }, 
     introspectHandler
 );
