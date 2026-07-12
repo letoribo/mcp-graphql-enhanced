@@ -257,9 +257,19 @@ smithery tool call {connection} {tool_name} '{"key": "value"}'
 E.g.
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["Guild", "Message", "User"]}'
+smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["McpServer"], "typeDepth": 2}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ guildChannels(guild_id: \"1312302100125843476\") { name id topic } }"}'
 ```
-Note on HTTP/Remote Transport: The Smithery integration uses the server's HTTP/JSON-RPC endpoint as a lightweight bridge. This approach is optimized for network efficiency and external connectivity, providing a streamlined experience compared to the standard stdio transport.
+### ☁️ Deploy to Cloud
+This server is fully containerized and optimized for long-running processes.
+
+### Recommended Hosting
+- **Railway** (recommended, easiest to set up, no config needed)
+- **Render**
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new?template=https://github.com/letoribo/mcp-graphql-enhanced)
+
+**Important:** For hosted environments, you **must** set the environment variable `ENABLE_HTTP=true` in your platform's settings to ensure the HTTP transport layer is active.
 
 ### 🖥️ Claude Desktop Configuration Examples
 You can connect Claude Desktop to your GraphQL API using either the npx package (recommended for simplicity) or the Docker image (ideal for reproducibility and isolation).

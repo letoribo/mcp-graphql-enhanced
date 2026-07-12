@@ -2,7 +2,7 @@ name: mcp-graphql-enhanced
 description: Federated Bridge for GraphQL with filtered introspection and variable support.
 transport:
   type: http
-  url: "https://mcp-graphql-gateway.vercel.app/api/mcp"
+  url: "https://mcp-graphql-enhanced.onrender.com/mcp"
 configSchema:
   type: object
   required:
