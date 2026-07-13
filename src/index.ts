@@ -60,9 +60,14 @@ const EnvSchema = z.object({
         }),
     SCHEMA: z.string().optional(),
     MCP_PORT: z.preprocess(
-        (val: unknown) => (val ? parseInt(val as string) : undefined),
-        z.number().int().min(1024).max(65535).optional()
-    ).default(false),
+        (val: unknown) => {
+            // Railway/Render dynamically assign the port via the PORT env var.
+            // If set, we use it to ensure the HTTP server binds to the platform's expected interface.
+            const port = val || process.env.PORT || 6274;
+            return parseInt(port as string);
+        },
+        z.number().int().min(1024).max(65535)
+    ).default(6274),
     ENABLE_HTTP: z
         .enum(["true", "false", "auto"])
         .transform((value: string) => {
@@ -693,9 +698,7 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 // --- SERVER LIFECYCLE ---
 async function main() {
     const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
-
-    const isAuto = typeof env.ENABLE_HTTP === 'string' && env.ENABLE_HTTP === "auto";
-    const shouldStartHttp = env.ENABLE_HTTP === true || (isAuto && !!env.MCP_PORT);
+    const shouldStartHttp = env.ENABLE_HTTP && !isInspector;
     
     if (!shouldStartHttp) {
         process.stdin.on('end', () => {
@@ -704,7 +707,7 @@ async function main() {
         });
     }
     
-    if (shouldStartHttp && !isInspector) {
+    if (shouldStartHttp) {
         const httpSrv = http.createServer(handleHttpRequest);
         
         const start = (port: number) => {
@@ -732,14 +735,9 @@ async function main() {
             });
         };
 
-        start(env.MCP_PORT|| 6274);
-    }
-
-    if (!shouldStartHttp) {
-        const transport = new StdioServerTransport();
-        await server.connect(transport);
+        start(env.MCP_PORT);
     } else {
-        console.error("[SYSTEM] HTTP mode active, skipping Stdio transport to prevent shutdown.");
+        await server.connect(new StdioServerTransport());
     }
 
     console.error(`[BOOT] Initializing schema sync for: ${env.ENDPOINT}`);
