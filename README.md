@@ -4,6 +4,21 @@
 An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
 > Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
 
+#### 🎯 What is mcp-graphql-enhanced?
+`mcp-graphql-enhanced` is a high-performance, federated GraphQL gateway designed to act as a workhorse for LLM agents. It bridges the gap between massive, complex GraphQL ecosystems and the context-limited environment of AI assistants. Unlike standard "all-or-nothing" introspection tools that crash under the weight of large schemas (like GitHub's or enterprise-grade Neo4j graphs), this server provides surgical control over how your agent perceives and interacts with your data.
+
+#### 💡 Why do you need it?
+If you have ever seen the`<error>Tool result is too large</error>`while trying to introspect your API, you are already hitting the limits of standard MCP implementations. Here is why mcp-graphql-enhanced is the industry-standard choice for professional environments:
+
+Avoid the 1MB Ceiling: It shifts the responsibility for scope from the server to the caller. Instead of a unilateral "everything or nothing" dump, you get granular control via typeNames and typeDepth parameters.
+
+Surgical Precision: You can selectively introspect only the nodes you need (e.g., Repository, User, or Message), keeping your context window clean and your LLM focused.
+
+Predictability over Immunity: It doesn't promise "unlimited" capacity—it promises predictability. In enterprise systems, you need a tool that lets you navigate the graph surgically and fail predictably if you overstep, rather than a "black box" that dies on you the moment the schema grows.
+
+Proof of Performance: See a real-world demonstration of the gateway bypassing standard architectural limits during a live diagnostic test against the GitHub API:
+🔗 Diagnostic Case Study: Scoped vs. Monolithic Introspection ([Shared Chat](https://claude.ai/share/5b845f72-809a-42ee-8083-361314126069))
+
 ## 💬 Community & Support
 
 Join the conversation! If you have questions about using this bridge with Neo4j, Discord data graphs, or GraphQL in general, come hang out with us:
@@ -230,7 +245,7 @@ Example of port configuration and development mode settings.
 # Change the HTTP port
 MCP_PORT=8080 npx @letoribo/mcp-graphql-enhanced
 
-# Test the surgical precision and the IDE immediately:
+# Test targeted introspection and explore the schema visually:
 ENDPOINT=https://api.github.com/graphql \
 HEADERS='{"Authorization":"Bearer YOUR_GITHUB_TOKEN"}' \
 ENABLE_HTTP=true \
