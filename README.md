@@ -29,7 +29,7 @@ Join the conversation! If you have questions about using this bridge with Neo4j,
 This is the best place to share your feedback, report issues, or suggest new "enhanced" features for the bridge.
 
 ## ✨ Key Enhancements
-* ✅ **Built-in GraphiQL IDE** — Visual playground at http://localhost:MCP_PORT/ (or /graphiql) with pre-configured headers.
+* ✅ **Built-in GraphiQL IDE** — Visual playground at / (or /graphql, /graphiql) with pre-configured headers for instant testing and introspection.
 * ✅ **Dual Transport** — Supports both **STDIO** (for local CLI/client tools) and **HTTP/JSON-RPC** (for external/browser clients).
 * ✅ **Dynamic headers** — pass `Authorization`, `X-API-Key`, etc., via tool arguments (no config restarts)
 * ✅ **Robust variables parsing** — fixes `“Query variables must be a null or an object”` error
@@ -82,7 +82,7 @@ For GraphQL server implementations that return query execution plans (like `@neo
 ## 🎨 Visual Command Center (GraphiQL)
 Unlike standard MCP servers, this one provides a visual interface for humans. When running with `ENABLE_HTTP=true`, you can open a full-featured **GraphiQL IDE** in your browser.
 
-* **Endpoint:** `http://localhost:6274/` (or `/graphiql`)
+* **Endpoint:** `http://localhost:6274/` (or /graphql, /graphiql)
 * **Header Sync:** Any headers set in your environment (like GitHub tokens) are automatically injected into the GraphiQL "Headers" tab for immediate testing.
 
 ## 💻 HTTP / Dual Transport

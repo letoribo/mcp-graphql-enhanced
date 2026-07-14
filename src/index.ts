@@ -603,7 +603,7 @@ async function executeGraphQL(query: string, variables: any) {
     return parsed.data ? parsed : { data: parsed };
 }    
 
-// --- HTTP ADAPTER FOR GRAPHIQL & SSE ---
+// --- HTTP ADAPTER FOR GRAPHIQL & NATIVE GRAPHQL ---
 async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -616,6 +616,7 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
     if (req.method === 'GET') {
         switch (url.pathname) {
             case '/':
+            case '/graphql':    
             case '/graphiql':
                 res.writeHead(200, { 'Content-Type': 'text/html' });
                 const host = req.headers.host || ''; 
@@ -709,7 +710,8 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                 
                 return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
 
-            case '/':    
+            case '/':  
+            case '/graphql':
             case '/graphiql':
                 try {
                     const { query, variables } = JSON.parse(body);
@@ -761,7 +763,7 @@ async function main() {
                 const address = httpSrv.address();
                 const actualPort = typeof address === 'object' && address ? address.port : port;
                 console.error(`[SYSTEM] Federated Bridge active on port ${actualPort}`);
-                console.error(`📡 SSE Endpoint: http://localhost:${actualPort}/mcp`);
+                console.error(`📡 MCP Endpoint: http://localhost:${actualPort}/mcp`);
                 if (process.env.ENABLE_HTTP === "true") {
                     console.error(`🎨 GraphiQL: http://localhost:${actualPort}/graphiql`);
                 }

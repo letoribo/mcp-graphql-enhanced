@@ -7,7 +7,7 @@
   "transport": {
     "type": "http",
     "command": "npx",
-    "args": ["-y", "@letoribo/mcp-graphql-enhanced@4.9.2"]
+    "args": ["-y", "@letoribo/mcp-graphql-enhanced@latest"]
   },
   "tools": [
     {
