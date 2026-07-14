@@ -579,6 +579,30 @@ function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 2
     res.end(JSON.stringify(responseBody));
 }
 
+const readBody = (req: IncomingMessage): Promise<string> => 
+    new Promise((resolve) => {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', () => resolve(body));
+    });
+
+async function executeGraphQL(query: string, variables: any) {
+    const handler = toolHandlers.get("query-graphql");
+    if (!handler) {
+        throw new Error("GraphQL handler not found");
+    }
+
+    const mcpResult = await handler({ query, variables });
+    
+    if (mcpResult.isError) {
+        return { errors: [{ message: mcpResult.content[0].text }] };
+    }
+
+    const resultText = mcpResult.content[0].text;
+    const parsed = JSON.parse(resultText);
+    return parsed.data ? parsed : { data: parsed };
+}    
+
 // --- HTTP ADAPTER FOR GRAPHIQL & SSE ---
 async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -612,87 +636,96 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
         }
     }
 
-    if (url.pathname === '/mcp' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
-        req.on('end', async () => {
-            let payload: any;
-            try {
-                payload = JSON.parse(body);
-            } catch (e: any) {
-                return sendJsonResponse(res, { 
-                    jsonrpc: '2.0', 
-                    error: { message: e.message } 
-                }, 500);
-            }
+    if (req.method === 'POST') {
+        const body = await readBody(req);
 
-            const { method, id, params } = payload;
-            if (method === "initialize") {
-                return sendJsonResponse(res, {
-                    jsonrpc: '2.0',
-                    id,
-                    result: {
-                        protocolVersion: "2025-11-25",
-                        capabilities: { tools: {}, prompts: {} },
-                        serverInfo: { name: env.NAME, version: getVersion() }
-                    }
-                });
-            }
-            updateSession(payload.params);
+        switch (url.pathname) {
+            case '/mcp':
+                let payload: any;
+                try { payload = JSON.parse(body); } 
+                catch (e: any) { return sendJsonResponse(res, { jsonrpc: '2.0', error: { message: e.message } }, 500); }
 
-            if (!payload.method && payload.query) {
-                const handler = toolHandlers.get("query-graphql");
-                if (handler) {
-                    const mcpResult = await handler({ 
-                        query: payload.query, 
-                        variables: payload.variables 
+                const { method, id, params } = payload;
+
+                if (method === "initialize") {
+                    return sendJsonResponse(res, {
+                        jsonrpc: '2.0',
+                        id,
+                        result: {
+                            protocolVersion: "2025-11-25",
+                            capabilities: { tools: {}, prompts: {} },
+                            serverInfo: { name: env.NAME, version: getVersion() }
+                        }
                     });
-                    
-                    const resultText = mcpResult.content[0].text;
-                    if (mcpResult.isError || resultText.startsWith('❌')) {
-                        sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
-                    }
-                    const parsed = JSON.parse(resultText);
-
-                    const graphQLResponse = parsed.data ? parsed : { data: parsed };
-                    return sendJsonResponse(res, graphQLResponse);
                 }
-            }               
+                updateSession(payload.params);
 
-            if (method === "tools/list" || method === "list-tools") {
-                return sendJsonResponse(res, { 
-                    jsonrpc: '2.0', 
-                    id, 
-                    result: { tools: registeredToolsMetadata } 
-                });
-            }
+                if (!payload.method && payload.query) {
+                    const handler = toolHandlers.get("query-graphql");
+                    if (handler) {
+                        const mcpResult = await handler({ 
+                            query: payload.query, 
+                            variables: payload.variables 
+                        });
+                        
+                        const resultText = mcpResult.content[0].text;
+                        if (mcpResult.isError || resultText.startsWith('❌')) {
+                            sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
+                        }
+                        const parsed = JSON.parse(resultText);
 
-            const target = (method === "call-tool" || method === "tools/call") ? params.name : method;
-            const args = (method === "call-tool" || method === "tools/call") ? params.arguments : params;
+                        const graphQLResponse = parsed.data ? parsed : { data: parsed };
+                        return sendJsonResponse(res, graphQLResponse);
+                    }
+                }               
 
-            const handler = toolHandlers.get(target);
-            if (!handler) {
-                return sendJsonResponse(res, { 
-                    jsonrpc: '2.0', 
-                    id, 
-                    error: { code: -32601, message: `Method ${target} not found` } 
-                });
-            }
+                if (method === "tools/list" || method === "list-tools") {
+                    return sendJsonResponse(res, { 
+                        jsonrpc: '2.0', 
+                        id, 
+                        result: { tools: registeredToolsMetadata } 
+                    });
+                }
 
-            const requestHost = req.headers.host;
-            const enrichedArgs = { 
-                ...args, 
-                _request_meta: { host: requestHost }
-            };
+                const target = (method === "call-tool" || method === "tools/call") ? params.name : method;
+                const args = (method === "call-tool" || method === "tools/call") ? params.arguments : params;
 
-            const result = await handler(enrichedArgs);
-            
-            return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
-        });
-        return;
+                const handler = toolHandlers.get(target);
+                if (!handler) {
+                    return sendJsonResponse(res, { 
+                        jsonrpc: '2.0', 
+                        id, 
+                        error: { code: -32601, message: `Method ${target} not found` } 
+                    });
+                }
+
+                const requestHost = req.headers.host;
+                const enrichedArgs = { 
+                    ...args, 
+                    _request_meta: { host: requestHost }
+                };
+
+                const result = await handler(enrichedArgs);
+                
+                return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
+
+            case '/':    
+            case '/graphiql':
+                try {
+                    const { query, variables } = JSON.parse(body);
+                    const result = await executeGraphQL(query, variables);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify(result));
+                } catch (e) {
+                    res.writeHead(400);
+                    return res.end(JSON.stringify({ error: 'Invalid GraphQL request' }));
+                }
+                
+            default:
+                res.writeHead(404);
+                return res.end(JSON.stringify({ error: 'Endpoint not found' }));
+        }
     }
-    res.writeHead(404);
-    res.end("Not Found");
 }
 
 // --- SERVER LIFECYCLE ---
