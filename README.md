@@ -253,7 +253,20 @@ npx @letoribo/mcp-graphql-enhanced
 
 # Then visit http://localhost:6274/graphiql
 ```
-#### 5. Integration via Smithery CLI
+#### 5. Interactive Launch with mcpgql (Recommended)
+If you want to skip manual environment variable setup, use our CLI tool.
+If installed globally (`npm install -g @letoribo/mcpgql`), simply run:
+```
+mcpgql
+```
+Alternatively, you can run it without global installation using:
+```
+npx @letoribo/mcpgql@latest
+```
+- **Zero-config start**: Automatic discovery and template initialization.
+- **Interactive selection**: Toggle multiple endpoints and permissions on the fly.
+- **Bridge mode**: Automatically handles the Federated Bridge setup on localhost:6274.  
+#### 6. Integration via Smithery CLI
 Smithery provides a powerful way to manage your MCP servers, handle authentication, and interact with tools directly from your terminal
 ```
 # 1. Install Smithery CLI
