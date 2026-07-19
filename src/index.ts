@@ -759,7 +759,7 @@ async function main() {
                 }
             });
 
-            httpSrv.listen(port, () => {
+            httpSrv.listen(port, '0.0.0.0', () => {
                 const address = httpSrv.address();
                 const actualPort = typeof address === 'object' && address ? address.port : port;
                 console.error(`[SYSTEM] Federated Bridge active on port ${actualPort}`);
