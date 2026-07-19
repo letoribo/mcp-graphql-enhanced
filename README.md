@@ -254,7 +254,7 @@ npx @letoribo/mcp-graphql-enhanced
 # Then visit http://localhost:6274/graphiql
 ```
 #### 5. Interactive Launch with mcpgql (Recommended)
-If you want to skip manual environment variable setup, use our CLI tool.
+If you want to skip manual environment variable setup, use our CLI tool available on [npm](https://www.npmjs.com/package/@letoribo/mcpgql).
 If installed globally (`npm install -g @letoribo/mcpgql`), simply run:
 ```
 mcpgql
