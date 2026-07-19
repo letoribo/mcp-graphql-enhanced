@@ -63,7 +63,7 @@ const EnvSchema = z.object({
         (val: unknown) => {
             // Railway/Render dynamically assign the port via the PORT env var.
             // If set, we use it to ensure the HTTP server binds to the platform's expected interface.
-            const port = val || process.env.PORT || 6274;
+            const port = process.env.PORT || val || 6274;
             return parseInt(port as string);
         },
         z.number().int().min(1024).max(65535)
