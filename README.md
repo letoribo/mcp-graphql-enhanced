@@ -287,17 +287,21 @@ smithery tool call letoribo-mcp-graphql-enhanced introspect-schema
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["Guild", "Message", "User"]}'
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["McpServer"], "typeDepth": 2}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ guildChannels(guild_id: \"1312302100125843476\") { name id topic } }"}'
+smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ searchMcpServers(q: \"mcp-remote\", limit: 50) { id name namespace description environmentVariablesJsonSchema { properties required } } }"}'
 ```
 ### ☁️ Deploy to Cloud
 This server is fully containerized and optimized for long-running processes.
-
 ### Recommended Hosting
-- **Railway** (recommended, easiest to set up, no config needed)
-- **Render**
+| Platform | Recommended PORT | Notes |
+| :--- | :--- | :--- |
+| ***Railway*** | `8080` | Set `PORT` in Variables and update Networking ingress port. |
+| ***Render*** | `10000` | Set `PORT` in Environment Variables. |
 
 [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new?template=https://github.com/letoribo/mcp-graphql-enhanced)
 
-**Important:** For hosted environments, you **must** set the environment variable `ENABLE_HTTP=true` in your platform's settings to ensure the HTTP transport layer is active.
+**Important:** 
+* For hosted environments, you **must** set the environment variable `ENABLE_HTTP=true` in your platform's settings to ensure the HTTP transport layer is active.
+* Ensure your hosting provider's public networking settings are configured to route traffic to the port defined in your `PORT` environment variable to avoid `502 Bad Gateway` errors.
 
 ### 🖥️ Claude Desktop Configuration Examples
 You can connect Claude Desktop to your GraphQL API using either the npx package (recommended for simplicity) or the Docker image (ideal for reproducibility and isolation).
