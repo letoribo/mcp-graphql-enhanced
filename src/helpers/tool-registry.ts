@@ -12,7 +12,8 @@ export function registerTool(
     description: string,
     schema: any,
     handler: (args: any) => Promise<any>,
-    outputSchema?: any
+    outputSchema?: any,
+    annotations?: any
 ) {
     // 1. Official MCP Server registration
     server.tool(name, description, schema, handler);
@@ -70,6 +71,7 @@ export function registerTool(
                 return !isOptional && !isDefault && !key.includes('?');
             })
         },
-        ...(outputSchema ? { outputSchema } : {})
+        ...(outputSchema ? { outputSchema } : {}),
+        ...(annotations ? { annotations } : {})
     });
 }

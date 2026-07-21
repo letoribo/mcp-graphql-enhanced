@@ -430,6 +430,12 @@ registerTool(
             data: { type: "object", description: "The merged GraphQL response data" },
             cypher_execution_plan: { type: "array", items: { type: "string" }, description: "Execution plans from connected Neo4j nodes" }
         }
+    },
+    {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
     }
 );
 
@@ -570,6 +576,12 @@ registerTool(
         properties: {
             content: { type: "array", items: { type: "object" } }
         }
+    },
+    {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
     }
 );
 
