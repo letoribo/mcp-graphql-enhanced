@@ -11,7 +11,8 @@ export function registerTool(
     name: string,
     description: string,
     schema: any,
-    handler: (args: any) => Promise<any>
+    handler: (args: any) => Promise<any>,
+    outputSchema?: any
 ) {
     // 1. Official MCP Server registration
     server.tool(name, description, schema, handler);
@@ -27,30 +28,48 @@ export function registerTool(
             type: "object",
             properties: Object.fromEntries(
                 Object.entries(schema).map(([key, value]: [string, any]) => {
-                    // Recursive helper to extract type info from Zod objects
                     const getZodType = (v: any): any => {
-                        const type = v?._def?.typeName?.replace('Zod', '').toLowerCase() || "string";
-                        
-                        if (type === 'array') {
-                            return {
-                                type: "array",
-                                items: { type: getZodType(v._def.type) }
-                            };
+                        let inner = v;
+                        let desc: string | undefined = undefined;
+
+                        while (inner?._def) {
+                            if (inner._def.description) {
+                                desc = inner._def.description;
+                            }
+                            if (inner._def.innerType) {
+                                inner = inner._def.innerType;
+                            } else if (inner._def.type) {
+                                inner = inner._def.type;
+                            } else {
+                                break;
+                            }
                         }
-                        return { type };
+
+                        const typeName = inner?._def?.typeName?.replace('Zod', '').toLowerCase() || "string";
+                        
+                        const result: any = { type: typeName };
+                        if (desc) {
+                            result.description = desc;
+                        }
+
+                        if (typeName === 'array' && inner._def.type) {
+                            result.items = getZodType(inner._def.type);
+                        }
+                        
+                        return result;
                     };
 
                     const typeInfo = getZodType(value);
                     return [key, typeInfo];
                 })
             ),
-            // Identify required fields by checking for ZodOptional or '?' in key
             required: Object.keys(schema).filter(key => {
                 const val = schema[key] as any;
                 const isOptional = val?._def?.typeName === 'ZodOptional';
                 const isDefault = val?._def?.typeName === 'ZodDefault';
                 return !isOptional && !isDefault && !key.includes('?');
             })
-        }
+        },
+        ...(outputSchema ? { outputSchema } : {})
     });
 }

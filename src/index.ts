@@ -421,7 +421,16 @@ registerTool(
         variables: z.string().optional().describe("JSON stringified object of variables. Example: '{\"id\": \"123\"}'."),
         headers: z.string().optional().describe("JSON stringified object of extra HTTP headers for the request."),
     }, 
-    queryGraphqlHandler
+    queryGraphqlHandler,
+    {
+        type: "object",
+        description: "Result of the GraphQL query, including node metadata and execution plans if available.",
+        properties: {
+            meta: { type: "object", description: "Node query statistics" },
+            data: { type: "object", description: "The merged GraphQL response data" },
+            cypher_execution_plan: { type: "array", items: { type: "string" }, description: "Execution plans from connected Neo4j nodes" }
+        }
+    }
 );
 
 /**
@@ -554,7 +563,14 @@ registerTool(
         ),
         typeDepth: z.number().optional().describe("Depth of nested fields to retrieve (default: 2)"),
     }, 
-    introspectHandler
+    introspectHandler,
+    {
+        type: "object",
+        description: "GraphQL schema SDL or Federated Manifest",
+        properties: {
+            content: { type: "array", items: { type: "object" } }
+        }
+    }
 );
 
 // --- PROMPT REGISTRY ---
