@@ -203,7 +203,6 @@ npx @modelcontextprotocol/inspector \
 | `SCHEMA` | Path to a local GraphQL schema file or URL | - |
 | `MCP_PORT` | Port for the HTTP/JSON-RPC server. | `6274` |
 | `ENABLE_HTTP` | Enable HTTP transport: `auto` (default), `true`, or `false` | `auto` |
-| `DEBUG` | Set to `mcp:*` for detailed SDK logs | - |
 **Note on `ENABLE_HTTP`:** 
 - `auto` (default): Automatically enables HTTP only when running in MCP Inspector...
 - `true`: Always enable HTTP server
@@ -286,8 +285,12 @@ E.g.
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["Guild", "Message", "User"]}'
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["McpServer"], "typeDepth": 2}'
+smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ countMcpServers }"}'
+smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ countMcpServers(q: \"graphql\") }"}'
+smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ proxyInfo { host source timestamp } }"}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ guildChannels(guild_id: \"1312302100125843476\") { name id topic } }"}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ searchMcpServers(q: \"mcp-remote\", limit: 50) { id name namespace description environmentVariablesJsonSchema { properties required } } }"}'
+smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ getMcpServer(id: \"a17sht5lzn\") { name namespace description environmentVariablesJsonSchema { properties required } repository { url } slug spdxLicense { name url } tools { description inputSchema name } url attributes id }}"}'
 ```
 ### ☁️ Deploy to Cloud
 This server is fully containerized and optimized for long-running processes.

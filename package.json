@@ -6,9 +6,10 @@
 		"graphql",
 		"llm",
 		"claude-desktop",
-		"cursor",
 		"enhanced",
-		"tool-calling"
+		"tool-calling",
+		"model-context-protocol",
+		"federated-graphql"
 	],
 	"author": "letoribo",
 	"license": "MIT",
