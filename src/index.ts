@@ -699,14 +699,18 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                         
                         const resultText = mcpResult.content[0].text;
                         if (mcpResult.isError || resultText.startsWith('❌')) {
-                            sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
+                            return sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
                         }
-                        const parsed = JSON.parse(resultText);
 
-                        const graphQLResponse = parsed.data ? parsed : { data: parsed };
-                        return sendJsonResponse(res, graphQLResponse);
+                        try {
+                            const parsed = JSON.parse(resultText);
+                            const graphQLResponse = parsed.data ? parsed : { data: parsed };
+                            return sendJsonResponse(res, graphQLResponse);
+                        } catch (e: any) {
+                            return sendJsonResponse(res, { errors: [{ message: `Invalid response format: ${resultText}` }] }, 500);
+                        }
                     }
-                }               
+                }
 
                 if (method === "tools/list" || method === "list-tools") {
                     return sendJsonResponse(res, { 
