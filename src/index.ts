@@ -724,7 +724,7 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                             const graphQLResponse = parsed.data ? parsed : { data: parsed };
                             return sendJsonResponse(res, graphQLResponse);
                         } catch (e: any) {
-                            return sendJsonResponse(res, { errors: [{ message: `Invalid response format: ${resultText}` }] }, 500);
+                            return sendJsonResponse(res, { data: { result: resultText } });
                         }
                     }
                 }
@@ -734,6 +734,14 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                         jsonrpc: '2.0', 
                         id, 
                         result: { tools: registeredToolsMetadata } 
+                    });
+                }
+
+                if (method === "prompts/list" || method === "list-prompts") {
+                    return sendJsonResponse(res, {
+                        jsonrpc: '2.0',
+                        id,
+                        result: { prompts: [] }
                     });
                 }
 
