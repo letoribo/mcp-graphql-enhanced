@@ -326,11 +326,15 @@ const queryGraphqlHandler = async ({
         const manifest = (global as any).nodeManifest || [];
         const allEndpoints = env.ENDPOINT.split(',').map(url => url.trim());
 
-        const endpoints = allEndpoints.filter(url => {
-            const nodeMeta = manifest.find((m: any) => m.endpoint === url);
-            if (!nodeMeta) return true;
-            return isQueryRelevantToNode(parsedQuery, nodeMeta);
-        });
+        let endpoints = allEndpoints;
+
+        if (allEndpoints.length > 1) {
+            endpoints = allEndpoints.filter(url => {
+                const nodeMeta = manifest.find((m: any) => m.endpoint === url);
+                if (!nodeMeta) return true;
+                return isQueryRelevantToNode(parsedQuery, nodeMeta);
+            });
+        }
 
         if (endpoints.length === 0) {
             throw new Error("None of the active endpoints support the requested query entities based on their manifests.");
