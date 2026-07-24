@@ -17,6 +17,7 @@ import {
 } from "./helpers/introspection.js";
 import { registerTool } from "./helpers/tool-registry.js";
 import { registerPrompt } from "./helpers/prompt-registry.js";
+import { isQueryRelevantToNode } from "./helpers/routing.js";
 
 /**
  * Retrieves the current version from package.json
@@ -322,7 +323,19 @@ const queryGraphqlHandler = async ({
         const fetchHeaders = { "Content-Type": "application/json", ...getEffectiveHeaders(), ...runtimeHeaders };
         const fetchVariables = variables ? (typeof variables === 'string' ? JSON.parse(variables) : variables) : undefined;
 
-        const endpoints = env.ENDPOINT.split(',').map(url => url.trim());
+        const manifest = (global as any).nodeManifest || [];
+        const allEndpoints = env.ENDPOINT.split(',').map(url => url.trim());
+
+        const endpoints = allEndpoints.filter(url => {
+            const nodeMeta = manifest.find((m: any) => m.endpoint === url);
+            if (!nodeMeta) return true;
+            return isQueryRelevantToNode(parsedQuery, nodeMeta);
+        });
+
+        if (endpoints.length === 0) {
+            throw new Error("None of the active endpoints support the requested query entities based on their manifests.");
+        }
+
         const executeResults = await Promise.allSettled(
             endpoints.map(async (url) => { 
                 const response = await fetch(url, {
