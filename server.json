@@ -1,0 +1,64 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.letoribo/mcp-graphql-enhanced",
+  "description": "GraphQL gateway for LLMs. Handles huge GitHub GraphQL & @neo4j/graphql schemas without crashing",
+  "repository": {
+    "url": "https://github.com/letoribo/mcp-graphql-enhanced",
+    "source": "github"
+  },
+  "version": "4.13.2",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@letoribo/mcp-graphql-enhanced",
+      "version": "4.13.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "ENDPOINT",
+          "description": "GraphQL endpoint(s). Supports comma-separated list for Multi-Node Architecture.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "HEADERS",
+          "description": "JSON string containing headers for requests.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "ALLOW_MUTATIONS",
+          "description": "Enable mutation operations (disabled by default).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "NAME",
+          "description": "Name of the MCP server.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "SCHEMA",
+          "description": "Path to a local GraphQL schema file or URL.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "MCP_PORT",
+          "description": "Port for the HTTP/JSON-RPC server.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "ENABLE_HTTP",
+          "description": "Enable HTTP transport: auto (default), true, or false.",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
