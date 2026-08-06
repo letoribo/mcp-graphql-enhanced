@@ -297,7 +297,7 @@ const registeredToolsMetadata: any[] = [];
  * Tool: query-graphql
  * Broadcasts queries to all nodes and merges results with universal deduplication.
  */
-const queryGraphqlHandler = async ({ 
+export const queryGraphqlHandler = async ({ 
     query, 
     variables, 
     headers, 
@@ -445,7 +445,7 @@ registerTool(
  * Tool: introspect-schema
  * Provides a global view of all nodes and resolves type conflicts.
  */
-const introspectHandler = async (args: { typeNames?: string[], typeDepth?: number }) => {
+export const introspectHandler = async (args: { typeNames?: string[], typeDepth?: number }) => {
     if (cachedSchemas.length === 0) {
         await getSchema(true); 
     }
@@ -811,7 +811,22 @@ async function main() {
 process.on('SIGINT', () => { console.error('[SYSTEM] Shutting down...'); process.exit(0); });
 process.on('SIGTERM', () => { process.exit(0); });
 
-main().catch(err => {
-    console.error(`[FATAL] Startup failed: ${err.message}`);
-    process.exit(1);
-});
+// Keep the globalThis safety block at the very bottom
+if (!("WebSocketPair" in globalThis) && !process.env.CF_PAGES) {
+    // We check if main exists as a function in the scope before calling it
+    const globalContext = globalThis as any;
+    if (typeof globalContext.main === 'function') {
+        globalContext.main().catch((err: any) => {
+            console.error(`[FATAL] Startup failed: ${err.message}`);
+            process.exit(1);
+        });
+    } else {
+        // Fallback case: if main() was renamed or moved elsewhere in your file
+        try {
+            // @ts-ignore - Bypasses compiler strict-checks for local execution blocks
+            if (typeof main === 'function') { main(); }
+        } catch (e) {
+            console.log("[SYSTEM] Running inside non-monolithic runtime boundary.");
+        }
+    }
+}
