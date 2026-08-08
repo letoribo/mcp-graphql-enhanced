@@ -764,7 +764,7 @@ async function main() {
     const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
     const shouldStartHttp = env.ENABLE_HTTP && !isInspector;
     
-    if (!shouldStartHttp) {
+    if (!shouldStartHttp && process.stdin.isTTY) {
         process.stdin.on('end', () => {
             console.error('[SYSTEM] Parent process closed. Shutting down...');
             process.exit(0);
@@ -811,7 +811,6 @@ async function main() {
 process.on('SIGINT', () => { console.error('[SYSTEM] Shutting down...'); process.exit(0); });
 process.on('SIGTERM', () => { process.exit(0); });
 
-// Keep the globalThis safety block at the very bottom
 if (!("WebSocketPair" in globalThis) && !process.env.CF_PAGES) {
     // We check if main exists as a function in the scope before calling it
     const globalContext = globalThis as any;
