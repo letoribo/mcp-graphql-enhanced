@@ -676,6 +676,15 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                         }
                     });
                 }
+
+                if (method?.startsWith("notifications/")) {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    return res.end();
+                }
+
+                if (method === "ping") {
+                    return sendJsonResponse(res, { jsonrpc: '2.0', id, result: {} });
+                }
                 updateSession(payload.params);
 
                 if (!payload.method && payload.query) {

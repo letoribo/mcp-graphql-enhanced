@@ -34,7 +34,7 @@ This is the best place to share your feedback, report issues, or suggest new "en
 * ✅ **Dynamic headers** — pass `Authorization`, `X-API-Key`, etc., via tool arguments (no config restarts)
 * ✅ **Robust variables parsing** — fixes `“Query variables must be a null or an object”` error
 * ✅ **Smart introspection** — supports filtered requests (via typeNames) and recursive depth control (via typeDepth) to minimize LLM context noise and optimize schema exploration.
-* ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Groq Desktop**, **Glama** and any standard MCP client
+* ✅ **Full MCP compatibility** — works with **Claude Desktop**, **Groq Desktop**, **Google Antigravity**, **Glama**, **Gemini CLI**, **Hermes Agent** and any standard MCP client
 * ✅ **Secure by default** — mutations disabled unless explicitly enabled
 * ✅ **Dynamic Schema Evolution** — Smart diagnostics and gap analysis for servers that regenerate GraphQL types on-the-fly (like Neo4j).
 * ✅ **Deep Observability** — Automatic Cypher extraction and cleaning from GraphQL extensions.
