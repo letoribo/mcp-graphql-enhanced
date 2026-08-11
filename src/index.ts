@@ -18,6 +18,7 @@ import {
 import { registerTool } from "./helpers/tool-registry.js";
 import { registerPrompt } from "./helpers/prompt-registry.js";
 import { isQueryRelevantToNode } from "./helpers/routing.js";
+import { isDocker } from "./helpers/container.js";
 
 /**
  * Retrieves the current version from package.json
@@ -73,7 +74,7 @@ const EnvSchema = z.object({
         .enum(["true", "false", "auto"])
         .transform((value: string) => {
             if (value === "auto") {
-                return !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.MCP_PORT);
+                return !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
             }
             return value === "true";
         })
@@ -772,12 +773,14 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
 async function main() {
     const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
     const shouldStartHttp = env.ENABLE_HTTP && !isInspector;
-    
-    if (!shouldStartHttp && process.stdin.isTTY) {
-        process.stdin.on('end', () => {
-            console.error('[SYSTEM] Parent process closed. Shutting down...');
-            process.exit(0);
-        });
+
+    // Attach STDIO when stdin is a piped stream (!isTTY)
+    const isPipe = typeof process !== "undefined" && process.stdin && !process.stdin.isTTY;
+    if (isPipe && !shouldStartHttp) {
+        await server.connect(new StdioServerTransport());
+        
+        process.stdin.on('close', () => process.exit(0));
+        process.stdin.on('end', () => process.exit(0));
     }
     
     if (shouldStartHttp) {
@@ -786,11 +789,18 @@ async function main() {
         const start = (port: number) => {
             httpSrv.removeAllListeners('error');
             httpSrv.removeAllListeners('listening');
-            
+
             httpSrv.once('error', (e: any) => {
                 if (e.code === 'EADDRINUSE') {
-                    console.error(`[WARN] Port ${port} is in use. Trying ${port + 1}...`);
-                    httpSrv.close(() => start(port + 1));
+                    if (isDocker()) {
+                        // Port incrementing is ineffective inside Docker due to fixed host mapping (-p)
+                        console.error(`[FATAL] Port ${port} is already in use. Port fallback is disabled in Docker. Exiting...`);
+                        process.exit(1);
+                    } else {
+                        // Running natively on host: fall back to the next available port
+                        console.error(`[WARN] Port ${port} is in use. Trying ${port + 1}...`);
+                        httpSrv.close(() => start(port + 1));
+                    }
                 } else {
                     console.error(`[FATAL] Server error: ${e.message}`);
                     process.exit(1);
@@ -809,8 +819,6 @@ async function main() {
         };
 
         start(env.MCP_PORT);
-    } else {
-        await server.connect(new StdioServerTransport());
     }
 
     console.error(`[BOOT] Initializing schema sync for: ${env.ENDPOINT}`);
