@@ -32,7 +32,7 @@
 	},
 	"scripts": {
 		"dev": "tsx --watch src/index.ts",
-		"build": "tsc && cp package.json dist/package.json && chmod +x dist/index.js",
+		"build": "tsc && chmod +x dist/index.js",
 		"start": "node dist/index.js",
 		"format": "prettier --write ."
 	},
@@ -52,5 +52,5 @@
 		"tsx": "^4.21.0",
 		"typescript": "5.8.3"
 	},
-	"version": "4.14.4"
+	"version": "4.14.5"
 }

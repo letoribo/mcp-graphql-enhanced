@@ -184,12 +184,12 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
   return result;
 }
 
-export function getSafeIntrospectionOptions(depth: number = 2) {
+export function getSafeIntrospectionOptions(_depth: number = 2) {
   return {
     descriptions: true,
     directiveIsRepeatable: false,
     inputValueDeprecation: false,
     schemaDescription: false,
-    typeDepth: depth,
-  } as any;
+    specifiedByUrl: false,
+  };
 }

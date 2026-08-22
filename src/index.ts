@@ -19,13 +19,15 @@ import { registerTool } from "./helpers/tool-registry.js";
 import { registerPrompt } from "./helpers/prompt-registry.js";
 import { isQueryRelevantToNode } from "./helpers/routing.js";
 import { isDocker } from "./helpers/container.js";
+import path from "path";
 
 /**
  * Retrieves the current version from package.json
  */
 const getVersion = () => {
     try {
-        const pkg = require("./package.json");
+        const pkgPath = path.resolve(__dirname, "../package.json");
+        const pkg = require(pkgPath);
         return pkg.version;
     } catch {
         return "dev-version";
@@ -87,9 +89,15 @@ const env = EnvSchema.parse(process.env);
  * Build dynamic auth headers for nodes that require credentials
  */
 function getEffectiveHeaders(): Record<string, string> {
-    return { 
-        ...env.HEADERS,
-        "Content-Type": "application/json" 
+    const rawHeaders = (typeof env.HEADERS === 'object' && env.HEADERS !== null) 
+        ? (env.HEADERS as Record<string, string>) 
+        : {};
+
+    return {
+        "User-Agent": `MCP-GraphQL-Enhanced/${getVersion()}`,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        ...rawHeaders
     };
 }
 
@@ -196,6 +204,7 @@ async function performUpdate(force: boolean, typeDepth: number = 2): Promise<str
                         body: JSON.stringify({ 
                             query: getIntrospectionQuery(getSafeIntrospectionOptions(typeDepth))
                         }),
+                        keepalive: true
                     });
                     
                     if (!response.ok) {
@@ -239,8 +248,8 @@ async function performUpdate(force: boolean, typeDepth: number = 2): Promise<str
                     });
 
                     return schemaInstance;
-                } catch (e) {
-                    console.error(`[SYNC-WARN] Failed to reach ${url}`);
+                } catch (e: any) {
+                    console.error(`[SYNC-WARN] Failed to reach ${url}: ${e?.message || e}`);
                     return null;
                 }
             }));
@@ -283,7 +292,10 @@ async function performUpdate(force: boolean, typeDepth: number = 2): Promise<str
         return `✅ Status: Schema stable (${businessTypes.length} types).`;
 
     } catch (error: any) {
-        console.error(`[CRITICAL] Sync failure: ${error.message}`);
+        console.error(`[SYNC-WARN] Fetch failed:`, error?.message || error);
+        if (error?.cause) {
+            console.error(`[SYNC-WARN Cause]:`, error.cause);
+        }
         throw error;
     } finally {
         isUpdating = false;
