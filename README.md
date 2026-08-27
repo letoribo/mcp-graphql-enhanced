@@ -1,6 +1,6 @@
 # mcp-graphql-enhanced
 [![Glama](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced/badge)](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)
-[![mcp-graphql-enhanced MCP server](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced/badges/score.svg)](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced)[![smithery badge](https://smithery.ai/badge/letoribo/mcp-graphql-enhanced)](https://smithery.ai/servers/letoribo/mcp-graphql-enhanced)
+[![mcp-graphql-enhanced MCP server](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced/badges/score.svg)](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced)[![Smithery Listed](https://img.shields.io/badge/smithery-listed-ff5601?style=flat&logo=rocket&logoColor=white)](https://smithery.ai/servers/letoribo/mcp-graphql-enhanced)
 An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
 > Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
 
@@ -29,6 +29,7 @@ Join the conversation! If you have questions about using this bridge with Neo4j,
 This is the best place to share your feedback, report issues, or suggest new "enhanced" features for the bridge.
 
 ## ✨ Key Enhancements
+* ✅ **Dynamic Endpoint Switching** — Hot-swap targets on the fly directly via tool arguments without restarting the server or losing session context.
 * ✅ **Built-in GraphiQL IDE** — Visual playground at / (or /graphql, /graphiql) with pre-configured headers for instant testing and introspection.
 * ✅ **Dual Transport** — Supports both **STDIO** (for local CLI/client tools) and **HTTP/JSON-RPC** (for external/browser clients).
 * ✅ **Dynamic headers** — pass `Authorization`, `X-API-Key`, etc., via tool arguments (no config restarts)
@@ -38,6 +39,13 @@ This is the best place to share your feedback, report issues, or suggest new "en
 * ✅ **Secure by default** — mutations disabled unless explicitly enabled
 * ✅ **Dynamic Schema Evolution** — Smart diagnostics and gap analysis for servers that regenerate GraphQL types on-the-fly (like Neo4j).
 * ✅ **Deep Observability** — Automatic Cypher extraction and cleaning from GraphQL extensions.
+
+## 🔥 Dynamic Endpoint Switching
+The bridge allows LLMs or clients to dynamically target different GraphQL endpoints at runtime within a single session without requiring server restarts or configuration changes.
+
+Simply pass the optional `endpoint` parameter in `query-graphql` or `introspect-schema`:
+* **Zero Downtime**: Hot-swaps the underlying schema and clears internal caches instantly.
+* **Context Preservation**: Keeps the MCP connection open while shifting queries between different environments (e.g., switching from a Discord ingest node to a Neo4j graph database).
 
 ## 🚀 Federated Multi-Node Architecture (v3.9.1+)
 The server operates as a Federated GraphQL Gateway, merging independent nodes into a unified system.
@@ -145,10 +153,24 @@ curl -X POST http://localhost:6274/mcp \
   "params": {
     "name": "introspect-schema",
     "arguments": {
-      "typeNames": ["User", "Message"]
+      "endpoint": "https://mcp-neo4j-discord.vercel.app/api/graphiql"
     }
   },
   "id": 3
+}'
+
+curl -X POST http://localhost:6274/mcp \
+-H "Content-Type: application/json" \
+-d '{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "introspect-schema",
+    "arguments": {
+      "typeNames": ["User", "Message"]
+    }
+  },
+  "id": 4
 }'
 
 curl -X POST http://localhost:6274/mcp \
@@ -163,7 +185,7 @@ curl -X POST http://localhost:6274/mcp \
       "typeDepth": 4
     }
   },
-  "id": 4
+  "id": 5
 }'
 
 curl -X POST http://localhost:6274/mcp \
@@ -177,7 +199,40 @@ curl -X POST http://localhost:6274/mcp \
         "query": "{ guildChannels(guild_id: \"1312302100125843476\") { name id topic } }"
       }
     },
-    "id": 5
+    "id": 6
+  }'
+
+# Executing query with dynamic endpoint switching
+curl -X POST http://localhost:6274/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "query-graphql",
+      "arguments": {
+        "endpoint": "https://mcp-neo4j-discord.vercel.app/api/graphiql",
+        "query": "{ getGuilds { name } }"
+      }
+    },
+    "id": 7
+  }'
+
+# Targeted introspection with depth control and dynamic endpoint switching
+curl -X POST http://localhost:6274/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "introspect-schema",
+      "arguments": {
+        "endpoint": "https://mcp-neo4j-discord.vercel.app/api/graphiql",
+        "typeNames": ["Message"],
+        "typeDepth": 1
+      }
+    },
+    "id": 8
   }'
 ```
  (using port 6275 if 6274 was busy)
@@ -362,12 +417,17 @@ If you’ve cloned the repo and built the project (npm run build → outputs to 
 ## Available Tools
 The server provides two main tools:
 1. **introspect-schema**: Retrieves the GraphQL schema or a subset. Use this first to understand the graph structure.
-  - **Arguments:**
+  - ***Arguments:***
     - `typeNames` *(optional, array)*: List of specific types to introspect (e.g., `["User", "Message"]`). Reduces noise by returning only relevant parts of the graph.
     - `typeDepth` *(optional, number)*: Controls the recursion level of nested fields (Default: `2`). 
       > **Note:** `typeDepth` is only functional when `typeNames` is provided to narrow the scope.
+    - `endpoint` *(optional, string)*: Target GraphQL HTTP/HTTPS URL to dynamically switch endpoint on the fly before executing introspection.
   - **Note:** Filtered introspection is only available when querying a live GraphQL endpoint.
 2. **query-graphql**: Execute GraphQL queries against the endpoint. By default, mutations are disabled unless `ALLOW_MUTATIONS` is set to `true`.
+- ***Arguments:***
+    - `query` *(required, string)*: The GraphQL query or mutation string.
+    - `variables` *(optional, string)*: JSON stringified object of variables.
+    - `endpoint` *(optional, string)*: Target GraphQL HTTP/HTTPS URL to dynamically switch endpoint on the fly before executing query.
 ## Security Considerations
 Mutations are disabled by default to prevent unintended data changes. Always validate HEADERS and SCHEMA inputs in production. Use HTTPS endpoints and short-lived tokens where possible.
 ## Customize for your own server

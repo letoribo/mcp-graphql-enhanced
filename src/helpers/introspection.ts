@@ -82,7 +82,7 @@ export function introspectSpecificTypes(schema: GraphQLSchema, typeNames: string
     return type.toString();
   }
 
-  function formatArgs(args: readonly any[]) { // <-- добавили readonly
+  function formatArgs(args: readonly any[]) {
     return args
       .filter(arg => !arg.deprecationReason)
       .map(arg => ({

@@ -314,13 +314,24 @@ export const queryGraphqlHandler = async ({
     query, 
     variables, 
     headers, 
+    endpoint,
     _request_meta 
 }: { 
     query: string, 
     variables?: string, 
     headers?: string, 
+    endpoint?: string,
     _request_meta?: { host: string }
 }) => {
+    // 🚀 Send event to the parent process (server.js / Electron)
+    if (process.send) {
+        process.send({
+            type: 'MCP_TOOL_CALL',
+            toolName: 'query-graphql',
+            args: { query, variables, headers, endpoint }
+        });
+    }
+    
     const host = _request_meta?.host || "unknown-host";
     try {
         const parsedQuery = parse(query);
@@ -336,8 +347,16 @@ export const queryGraphqlHandler = async ({
         const fetchHeaders = { "Content-Type": "application/json", ...getEffectiveHeaders(), ...runtimeHeaders };
         const fetchVariables = variables ? (typeof variables === 'string' ? JSON.parse(variables) : variables) : undefined;
 
+        if (endpoint && endpoint.trim().length > 0 && endpoint.trim() !== env.ENDPOINT) {
+            env.ENDPOINT = endpoint.trim();
+            cachedSchemas = [];
+            await getSchema(true);
+        }
+
         const manifest = (global as any).nodeManifest || [];
-        const allEndpoints = env.ENDPOINT.split(',').map(url => url.trim());
+        
+        const activeEndpointString = endpoint && endpoint.trim().length > 0 ? endpoint : env.ENDPOINT;
+        const allEndpoints = activeEndpointString.split(',').map(url => url.trim());
 
         let endpoints = allEndpoints;
 
@@ -355,22 +374,49 @@ export const queryGraphqlHandler = async ({
 
         const executeResults = await Promise.allSettled(
             endpoints.map(async (url) => { 
-                const response = await fetch(url, {
-                    method: "POST",
-                    headers: fetchHeaders,
-                    body: JSON.stringify({ 
-                        query, 
-                        variables: { 
-                            ...fetchVariables,
-                            _proxyMeta: { host, source: "mcp-graphql-enhanced" } 
+                let response: Response | null = null;
+                let result: any = null;
+                let lastError: any = null;
+
+                // 🔄 If it's a cold start timeout (504/502), retry. Otherwise fail early.
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    try {
+                        response = await fetch(url, {
+                            method: "POST",
+                            headers: fetchHeaders,
+                            body: JSON.stringify({ 
+                                query, 
+                                variables: { 
+                                    ...fetchVariables,
+                                    _proxyMeta: { host, source: "mcp-graphql-enhanced" } 
+                                }
+                            }),
+                            signal: AbortSignal.timeout(15000)
+                        });
+
+                        if (response.ok) {
+                            result = await response.json();
+                            break;
                         }
-                    }),
-                    signal: AbortSignal.timeout(15000)
-                });
+                        
+                        if (attempt === 0 && response.status >= 500) {
+                            await new Promise(r => setTimeout(r, 800));
+                            continue;
+                        }
+
+                        result = await response.json();
+                        break;
+                    } catch (err) {
+                        lastError = err;
+                        if (attempt === 0) {
+                            await new Promise(r => setTimeout(r, 800));
+                        }
+                    }
+                }
+
+                if (!response && lastError) throw lastError;
                 
-                const result = await response.json();
-                
-                if (!response.ok && !result.errors) {
+                if (response && !response.ok && !result?.errors) {
                     throw new Error(`Node ${url} returned status ${response.status}`);
                 }
                 
@@ -450,6 +496,7 @@ registerTool(
         query: z.string().describe("The GraphQL query or mutation string. Example: 'query { guilds { id name } }'."),
         variables: z.string().optional().describe("JSON stringified object of variables. Example: '{\"id\": \"123\"}'."),
         headers: z.string().optional().describe("JSON stringified object of extra HTTP headers for the request."),
+        endpoint: z.string().optional().describe("Optional target GraphQL HTTP/HTTPS URL to dynamically switch endpoint before execution."),
     }, 
     queryGraphqlHandler
 );
@@ -458,7 +505,13 @@ registerTool(
  * Tool: introspect-schema
  * Provides a global view of all nodes and resolves type conflicts.
  */
-export const introspectHandler = async (args: { typeNames?: string[], typeDepth?: number }) => {
+export const introspectHandler = async (args: { typeNames?: string[], typeDepth?: number, endpoint?: string }) => {
+    // If endpoint is provided — temporarily override env.ENDPOINT for introspection
+    if (args.endpoint && args.endpoint.trim().length > 0) {
+        env.ENDPOINT = args.endpoint.trim();
+        cachedSchemas = []; // reset schema cache
+    }
+
     if (cachedSchemas.length === 0) {
         await getSchema(true); 
     }
@@ -554,6 +607,9 @@ export const introspectHandler = async (args: { typeNames?: string[], typeDepth?
         }
     }
 
+    // Un-comment for debugging typeDepth payload sizes in MCP clients:
+    // if (typeNames) console.error(`[DEBUG] typeDepth: ${depth}, Response Length: ${JSON.stringify(resolution).length} bytes`);
+
     return {
         content: [{
             type: "text" as const,
@@ -583,6 +639,7 @@ registerTool(
             "If omitted, returns a system-wide Federated Manifest overview."
         ),
         typeDepth: z.number().optional().describe("Depth of nested fields to retrieve (default: 2)"),
+        endpoint: z.string().optional().describe("Optional target GraphQL HTTP/HTTPS URL to dynamically switch endpoint before execution."),
     }, 
     introspectHandler
 );
