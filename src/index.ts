@@ -129,7 +129,8 @@ let updatePromise: Promise<string> | null = null;
 async function getSchema(
     force: boolean = false, 
     requestedTypes?: string[], 
-    typeDepth: number = 2
+    typeDepth: number = 2,
+    customHeaders?: Record<string, string>
 ): Promise<string | GraphQLSchema> {
     if (isUpdating && updatePromise) {
         return await updatePromise;
@@ -139,7 +140,7 @@ async function getSchema(
         if (requestedTypes && cachedSchemas.length > 0) {
             const allTypes = new Set(cachedSchemas.flatMap(s => Object.keys(s.getTypeMap())));
             const missing = requestedTypes.filter(t => !allTypes.has(t));
-            if (missing.length > 0) return await performUpdate(true, typeDepth);
+            if (missing.length > 0) return await performUpdate(typeDepth, customHeaders);
         }
         return cachedSchemaObject;
     }
@@ -147,7 +148,7 @@ async function getSchema(
     if (force) schemaLoadError = null;
     if (schemaLoadError) throw schemaLoadError;
 
-    updatePromise = performUpdate(force, typeDepth);
+    updatePromise = performUpdate(typeDepth, customHeaders);
     try {
         await updatePromise;
         return cachedSchemaObject;
@@ -159,7 +160,10 @@ async function getSchema(
 /**
  * Federated Update: Orchestrates introspection across all endpoints
  */
-async function performUpdate(force: boolean, typeDepth: number = 2): Promise<string> {
+async function performUpdate(
+    typeDepth: number = 2, 
+    customHeaders?: Record<string, string>
+): Promise<string> {
     isUpdating = true;
     const startTime = Date.now();
 
@@ -168,7 +172,10 @@ async function performUpdate(force: boolean, typeDepth: number = 2): Promise<str
         let tempSchemas: any[] = [];
         const manifest: any[] = [];
 
-        const activeHeaders = getEffectiveHeaders();
+        const activeHeaders = {
+            ...getEffectiveHeaders(),
+            ...customHeaders
+        };
 
         // --- FETCHING LOGIC: LOCAL SDL OR REMOTE BROADCAST ---
         if (env.SCHEMA) {
@@ -194,28 +201,91 @@ async function performUpdate(force: boolean, typeDepth: number = 2): Promise<str
             
             const results = await Promise.all(endpoints.map(async (url) => {
                 try {
-                    const response = await fetch(url, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "Accept": "application/json",
-                            ...activeHeaders
-                        },
-                        body: JSON.stringify({ 
-                            query: getIntrospectionQuery(getSafeIntrospectionOptions(typeDepth))
-                        }),
-                        keepalive: true
-                    });
-                    
-                    if (!response.ok) {
-                        const errText = await response.text();
-                        throw new Error(`Status ${response.status}: ${errText.substring(0, 50)}`);
-                    }
-                    
-                    const result = await response.json();
-                    if (!result.data) return null;
+                    // Helper to execute introspection query
+                    const fetchIntrospection = async (options?: any, useMinimalQuery = false) => {
+                        try {
+                            const queryStr = useMinimalQuery 
+                                ? `query IntrospectionQuery { __schema { queryType { name } mutationType { name } subscriptionType { name } types { ...FullType } directives { name description locations args { ...InputValue } } } } fragment FullType on __Type { kind name description fields(includeDeprecated: true) { name description args { ...InputValue } type { ...TypeRef } isDeprecated deprecationReason } inputFields { ...InputValue } interfaces { ...TypeRef } enumValues(includeDeprecated: true) { name description isDeprecated deprecationReason } possibleTypes { ...TypeRef } } fragment InputValue on __InputValue { name description type { ...TypeRef } defaultValue } fragment TypeRef on __Type { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } }`
+                                : getIntrospectionQuery(options);
 
-                    const schemaInstance = buildClientSchema(result.data);
+                            const cleanHeaders: Record<string, string> = {
+                                "Content-Type": "application/json",
+                                "Accept": "application/json"
+                            };
+
+                            if (activeHeaders) {
+                                for (const [k, v] of Object.entries(activeHeaders)) {
+                                    if (!['host', 'content-length', 'connection'].includes(k.toLowerCase())) {
+                                        cleanHeaders[k] = String(v);
+                                    }
+                                }
+                            }
+
+                            // 1. Attempt POST request
+                            let res = await fetch(url, {
+                                method: "POST",
+                                headers: cleanHeaders,
+                                body: JSON.stringify({ query: queryStr })
+                            });
+
+                            // 2. GET Fallback (specifically for fragile serverless endpoints like SWAPI Netlify)
+                            if (!res.ok) {
+                                console.warn(`[SYNC-WARN] POST returned HTTP ${res.status} from ${url}. Retrying with GET fallback...`);
+                                const getUrl = `${url}?query=${encodeURIComponent(queryStr.replace(/\s+/g, ' ').trim())}`;
+                                res = await fetch(getUrl, {
+                                    method: "GET",
+                                    headers: { "Accept": "application/json" }
+                                });
+                            }
+
+                            if (!res.ok) {
+                                console.error(`[SYNC-WARN] HTTP ${res.status} from ${url}`);
+                                return null;
+                            }
+
+                            const json: any = await res.json();
+                            
+                            if (json?.errors?.length) {
+                                console.error(`[SYNC-WARN] GraphQL errors from ${url}:`, json.errors[0]?.message);
+                                return null;
+                            }
+
+                            if (!json?.data) {
+                                console.error(`[SYNC-WARN] No data in response from ${url}`);
+                                return null;
+                            }
+
+                            return json.data;
+                        } catch (err: any) {
+                            console.error(`[SYNC-WARN] Fetch attempt failed for ${url}:`, err?.message || err);
+                            return null;
+                        }
+                    };
+
+                    // --- MAIN INTROSPECTION FLOW ---
+
+                    // 1. Attempt with expanded options
+                    let introspectionData = await fetchIntrospection(getSafeIntrospectionOptions(typeDepth));
+
+                    // 2. Fallback 1: Standard query without special parameters
+                    if (!introspectionData) {
+                        console.log(`[SYNC-INFO] Retrying ${url} with standard introspection query...`);
+                        introspectionData = await fetchIntrospection();
+                    }
+
+                    // 3. Fallback 2: Minimal GraphQL v14 query + GET support
+                    if (!introspectionData) {
+                        console.log(`[SYNC-INFO] Retrying ${url} with minimal GraphQL v14 query...`);
+                        introspectionData = await fetchIntrospection(undefined, true);
+                    }
+
+                    // Guard block: If all variants failed, return null and do not call buildClientSchema
+                    if (!introspectionData) {
+                        console.error(`[SYNC-WARN] Skipping ${url}: Unable to fetch valid introspection data.`);
+                        return null;
+                    }
+
+                    const schemaInstance = buildClientSchema(introspectionData);
                     schemaInstance._originUrl = url;
 
                     const typeMap = schemaInstance.getTypeMap();
@@ -323,7 +393,6 @@ export const queryGraphqlHandler = async ({
     endpoint?: string,
     _request_meta?: { host: string }
 }) => {
-    // 🚀 Send event to the parent process (server.js / Electron)
     if (process.send) {
         process.send({
             type: 'MCP_TOOL_CALL',
@@ -344,7 +413,6 @@ export const queryGraphqlHandler = async ({
         }
         
         const runtimeHeaders = headers ? JSON.parse(headers) : {};
-        const fetchHeaders = { "Content-Type": "application/json", ...getEffectiveHeaders(), ...runtimeHeaders };
         const fetchVariables = variables ? (typeof variables === 'string' ? JSON.parse(variables) : variables) : undefined;
 
         if (endpoint && endpoint.trim().length > 0 && endpoint.trim() !== env.ENDPOINT) {
@@ -354,12 +422,10 @@ export const queryGraphqlHandler = async ({
         }
 
         const manifest = (global as any).nodeManifest || [];
-        
         const activeEndpointString = endpoint && endpoint.trim().length > 0 ? endpoint : env.ENDPOINT;
         const allEndpoints = activeEndpointString.split(',').map(url => url.trim());
 
         let endpoints = allEndpoints;
-
         if (allEndpoints.length > 1) {
             endpoints = allEndpoints.filter(url => {
                 const nodeMeta = manifest.find((m: any) => m.endpoint === url);
@@ -378,21 +444,57 @@ export const queryGraphqlHandler = async ({
                 let result: any = null;
                 let lastError: any = null;
 
-                // 🔄 If it's a cold start timeout (504/502), retry. Otherwise fail early.
+                // 🛡️ GUARANTEED Apollo CSRF & JSON headers
+                const cleanHeaders: Record<string, string> = {
+                    "content-type": "application/json",
+                    "accept": "application/json",
+                    "apollo-require-preflight": "true",
+                    "x-apollo-operation-name": "MCPQuery"
+                };
+
+                // Merge headers from environment and runtime without overwriting CSRF protection
+                const mergedCustomHeaders = { ...getEffectiveHeaders(), ...runtimeHeaders };
+                for (const [k, v] of Object.entries(mergedCustomHeaders)) {
+                    const lowerKey = k.toLowerCase();
+                    if (!['host', 'content-length', 'connection'].includes(lowerKey)) {
+                        cleanHeaders[lowerKey] = String(v);
+                    }
+                }
+
+                const payloadVariables = fetchVariables 
+                    ? { ...fetchVariables, _proxyMeta: { host, source: "mcp-graphql-enhanced" } }
+                    : undefined;
+
                 for (let attempt = 0; attempt < 2; attempt++) {
                     try {
                         response = await fetch(url, {
                             method: "POST",
-                            headers: fetchHeaders,
+                            headers: cleanHeaders,
                             body: JSON.stringify({ 
                                 query, 
-                                variables: { 
-                                    ...fetchVariables,
-                                    _proxyMeta: { host, source: "mcp-graphql-enhanced" } 
-                                }
+                                ...(payloadVariables ? { variables: payloadVariables } : {})
                             }),
                             signal: AbortSignal.timeout(15000)
                         });
+
+                        // GET Fallback on HTTP 400
+                        if (!response.ok && response.status === 400) {
+                            const minifiedQuery = query.replace(/\s+/g, ' ').trim();
+                            let getUrl = `${url}?query=${encodeURIComponent(minifiedQuery)}`;
+                            
+                            if (fetchVariables) {
+                                getUrl += `&variables=${encodeURIComponent(JSON.stringify(fetchVariables))}`;
+                            }
+
+                            response = await fetch(getUrl, {
+                                method: "GET",
+                                headers: { 
+                                    "accept": "application/json",
+                                    "apollo-require-preflight": "true"
+                                },
+                                signal: AbortSignal.timeout(15000)
+                            });
+                        }
 
                         if (response.ok) {
                             result = await response.json();
@@ -505,15 +607,25 @@ registerTool(
  * Tool: introspect-schema
  * Provides a global view of all nodes and resolves type conflicts.
  */
-export const introspectHandler = async (args: { typeNames?: string[], typeDepth?: number, endpoint?: string }) => {
-    // If endpoint is provided — temporarily override env.ENDPOINT for introspection
-    if (args.endpoint && args.endpoint.trim().length > 0) {
-        env.ENDPOINT = args.endpoint.trim();
-        cachedSchemas = []; // reset schema cache
+export const introspectHandler = async (args: { 
+    typeNames?: string[], 
+    typeDepth?: number, 
+    endpoint?: string,
+    headers?: string 
+}) => {
+    let runtimeHeaders: Record<string, string> = {};
+    if (args.headers) {
+        try {
+            runtimeHeaders = JSON.parse(args.headers);
+        } catch {
+            console.error("[WARN] Failed to parse custom headers JSON in introspect-schema");
+        }
     }
 
-    if (cachedSchemas.length === 0) {
-        await getSchema(true); 
+    const hasEndpointOverride = args.endpoint && args.endpoint.trim().length > 0;
+    if (hasEndpointOverride) {
+        env.ENDPOINT = args.endpoint!.trim();
+        cachedSchemas = [];
     }
     
     let { typeNames, typeDepth } = args;
@@ -548,7 +660,8 @@ export const introspectHandler = async (args: { typeNames?: string[], typeDepth?
     }
 
     const depth = typeDepth ?? 2;   
-    await getSchema(false, cleanTypeNames, depth);
+    const forceRefresh = hasEndpointOverride || Object.keys(runtimeHeaders).length > 0;
+    await getSchema(forceRefresh, cleanTypeNames, depth, runtimeHeaders);
 
     if (cachedSchemas.length === 0) {
         return { content: [{ type: "text" as const, text: "❌ System is not initialized." }] };
@@ -640,6 +753,7 @@ registerTool(
         ),
         typeDepth: z.number().optional().describe("Depth of nested fields to retrieve (default: 2)"),
         endpoint: z.string().optional().describe("Optional target GraphQL HTTP/HTTPS URL to dynamically switch endpoint before execution."),
+        headers: z.string().optional().describe("JSON stringified object of extra HTTP headers for the introspection request (e.g. '{\"Authorization\": \"Bearer token\"}').")
     }, 
     introspectHandler
 );
