@@ -959,11 +959,20 @@ async function main() {
 
     // Attach STDIO when stdin is a piped stream (!isTTY)
     const isPipe = typeof process !== "undefined" && process.stdin && !process.stdin.isTTY;
-    if (isPipe && !shouldStartHttp) {
-        await server.connect(new StdioServerTransport());
+    if (isPipe) {
+        const stdioTransport = new StdioServerTransport();
         
-        process.stdin.on('close', () => process.exit(0));
-        process.stdin.on('end', () => process.exit(0));
+        if (shouldStartHttp) {
+            // In HTTP mode, initialize STDIO in the background without blocking execution
+            // or registering process.exit(0) on stdin close (prevents instant exits in cloud containers like Render).
+            server.connect(stdioTransport).catch((err) => {
+                console.error("[WARN] STDIO transport failed in dual mode:", err);
+            });
+        } else {
+            // In pure STDIO mode, connect synchronously and attach normal lifecycle handlers
+            await server.connect(stdioTransport);
+            process.stdin.on('close', () => process.exit(0));
+        }
     }
     
     if (shouldStartHttp) {

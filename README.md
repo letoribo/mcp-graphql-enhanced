@@ -340,12 +340,14 @@ E.g.
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["Guild", "Message", "User"]}'
 smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["McpServer"], "typeDepth": 2}'
+smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"endpoint": "https://mcp-discord.vercel.app/api/graphiql"}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ countMcpServers }"}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ countMcpServers(q: \"graphql\") }"}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ proxyInfo { host source timestamp } }"}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ guildChannels(guild_id: \"1312302100125843476\") { name id topic } }"}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ searchMcpServers(q: \"mcp-remote\", limit: 50) { id name namespace description environmentVariablesJsonSchema { properties required } } }"}'
 smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ getMcpServer(id: \"a17sht5lzn\") { name namespace description environmentVariablesJsonSchema { properties required } repository { url } slug spdxLicense { name url } tools { description inputSchema name } url attributes id }}"}'
+smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"endpoint": "https://mcp-neo4j-discord.vercel.app/api/graphiql", "query": "{ getGuilds { name } }"}'
 ```
 ### ☁️ Deploy to Cloud
 This server is fully containerized and optimized for long-running processes.
@@ -360,6 +362,28 @@ This server is fully containerized and optimized for long-running processes.
 **Important:** 
 * For hosted environments, you **must** set the environment variable `ENABLE_HTTP=true` in your platform's settings to ensure the HTTP transport layer is active.
 * Ensure your hosting provider's public networking settings are configured to route traffic to the port defined in your `PORT` environment variable to avoid `502 Bad Gateway` errors.
+
+### ⚠️ Concurrent Cloud Usage & Dynamic Endpoints
+
+While `mcp-graphql-enhanced` supports switching target endpoints on the fly via the optional `endpoint` argument, keep state mutability in mind when running in hosted/shared environments (e.g., Render, Railway, Smithery):
+
+* **State Isolation:** Providing an `endpoint` argument dynamically updates the active graph context for the server instance.
+* **Best Practice for Concurrent Cloud Requests:** If multiple clients, agent sessions, or automated workers share the same cloud instance, **always pass the `endpoint` explicitly in every tool call** (`query-graphql` and `introspect-schema`).
+* **Preventing Context Drift:** Relying on the implicitly cached endpoint in a shared environment can lead to race conditions where a concurrent call from another session switches the active upstream URL under your feet.
+
+### 🌐 Public Live Gateways (Hosted SSE/HTTP Bridges)
+
+If you want to test the bridge instantly without running local Node.js processes, use our hosted cloud endpoints:
+
+[![Cloudflare Workers](https://img.shields.io/badge/cloudflare-deployed-F38020?style=flat&logo=cloudflare&logoColor=white&labelColor=555)](https://mcp-graphql-enhanced.letoribo.workers.dev/mcp)
+[![Vercel Deployment](https://img.shields.io/badge/vercel-deployed-4c1?style=flat&logo=vercel&logoColor=white&labelColor=555)](https://mcp-graphql-enhanced.vercel.app/mcp)
+
+| Platform | Edge Runtime | Public MCP Endpoint |
+| :--- | :--- | :--- |
+| **Cloudflare Workers** | Workers V8 (Global Edge) | [`mcp-graphql-enhanced.letoribo.workers.dev/mcp`](https://mcp-graphql-enhanced.letoribo.workers.dev/mcp) |
+| **Vercel** | Node.js Serverless | [`mcp-graphql-enhanced.vercel.app/mcp`](https://mcp-graphql-enhanced.vercel.app/mcp) |
+
+> **Note:** Public gateways operate in shared environments. Remember to supply your explicit `endpoint` and `headers` in tool calls to ensure request isolation.
 
 ### 🖥️ Claude Desktop Configuration Examples
 You can connect Claude Desktop to your GraphQL API using either the npx package (recommended for simplicity) or the Docker image (ideal for reproducibility and isolation).
@@ -422,12 +446,22 @@ The server provides two main tools:
     - `typeDepth` *(optional, number)*: Controls the recursion level of nested fields (Default: `2`). 
       > **Note:** `typeDepth` is only functional when `typeNames` is provided to narrow the scope.
     - `endpoint` *(optional, string)*: Target GraphQL HTTP/HTTPS URL to dynamically switch endpoint on the fly before executing introspection.
+    - `headers` *(optional, string)*: JSON stringified object of custom HTTP headers (e.g., `'{"Authorization": "Bearer token"}'`).
   - **Note:** Filtered introspection is only available when querying a live GraphQL endpoint.
 2. **query-graphql**: Execute GraphQL queries against the endpoint. By default, mutations are disabled unless `ALLOW_MUTATIONS` is set to `true`.
 - ***Arguments:***
     - `query` *(required, string)*: The GraphQL query or mutation string.
     - `variables` *(optional, string)*: JSON stringified object of variables.
     - `endpoint` *(optional, string)*: Target GraphQL HTTP/HTTPS URL to dynamically switch endpoint on the fly before executing query.
+    - `headers` *(optional, string)*: JSON stringified object of custom HTTP headers (e.g., `'{"Authorization": "Bearer token"}'`).
+
+💡 Note: Dynamic Headers vs Static env
+Previously, auth tokens had to be hardcoded statically at startup inside the configuration's "env" block (e.g., in claude_desktop_config.json).
+
+With the optional headers argument added directly to query-graphql and introspect-schema, you get total dynamic control:
+* Keep Secrets in Your Terminal: You don't have to feed your private tokens (like GitHub PATs or Bearer keys) directly into Claude's prompt or static setup. Just set "ENABLE_HTTP": "true", run your cURL commands or local scripts directly in the terminal, and pass headers there. Any headers passed at runtime will override static tokens from your config file. Otherwise, Claude might just laugh at you for sharing your raw secret tokens in the chat!
+* On-the-Fly Switching: You can dynamically inject different auth headers per request or per endpoint right at execution time without restarting the MCP server.
+
 ## Security Considerations
 Mutations are disabled by default to prevent unintended data changes. Always validate HEADERS and SCHEMA inputs in production. Use HTTPS endpoints and short-lived tokens where possible.
 ## Customize for your own server
