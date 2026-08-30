@@ -844,8 +844,11 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
         switch (url.pathname) {
             case '/mcp':
                 let payload: any;
-                try { payload = JSON.parse(body); } 
-                catch (e: any) { return sendJsonResponse(res, { jsonrpc: '2.0', error: { message: e.message } }, 500); }
+                try { 
+                    payload = JSON.parse(body); 
+                } catch (e: any) { 
+                    return sendJsonResponse(res, { jsonrpc: '2.0', error: { code: -32700, message: `Parse error: ${e.message}` } }, 400); 
+                }
 
                 const { method, id, params } = payload;
 
@@ -869,27 +872,32 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                 if (method === "ping") {
                     return sendJsonResponse(res, { jsonrpc: '2.0', id, result: {} });
                 }
+
                 updateSession(payload.params);
 
                 if (!payload.method && payload.query) {
                     const handler = toolHandlers.get("query-graphql");
                     if (handler) {
-                        const mcpResult = await handler({ 
-                            query: payload.query, 
-                            variables: payload.variables 
-                        });
-                        
-                        const resultText = mcpResult.content[0].text;
-                        if (mcpResult.isError || resultText.startsWith('❌')) {
-                            return sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
-                        }
-
                         try {
-                            const parsed = JSON.parse(resultText);
-                            const graphQLResponse = parsed.data ? parsed : { data: parsed };
-                            return sendJsonResponse(res, graphQLResponse);
-                        } catch (e: any) {
-                            return sendJsonResponse(res, { data: { result: resultText } });
+                            const mcpResult = await handler({ 
+                                query: payload.query, 
+                                variables: payload.variables 
+                            });
+                            
+                            const resultText = mcpResult.content[0].text;
+                            if (mcpResult.isError || resultText.startsWith('❌')) {
+                                return sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
+                            }
+
+                            try {
+                                const parsed = JSON.parse(resultText);
+                                const graphQLResponse = parsed.data ? parsed : { data: parsed };
+                                return sendJsonResponse(res, graphQLResponse);
+                            } catch (e: any) {
+                                return sendJsonResponse(res, { data: { result: resultText } });
+                            }
+                        } catch (err: any) {
+                            return sendJsonResponse(res, { errors: [{ message: err.message || 'Execution error' }] }, 500);
                         }
                     }
                 }
@@ -910,8 +918,8 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                     });
                 }
 
-                const target = (method === "call-tool" || method === "tools/call") ? params.name : method;
-                const args = (method === "call-tool" || method === "tools/call") ? params.arguments : params;
+                const target = (method === "call-tool" || method === "tools/call") ? params?.name : method;
+                const args = (method === "call-tool" || method === "tools/call") ? params?.arguments : params;
 
                 const handler = toolHandlers.get(target);
                 if (!handler) {
@@ -928,9 +936,21 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                     _request_meta: { host: requestHost }
                 };
 
-                const result = await handler(enrichedArgs);
-                
-                return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
+                // Защита от крэша процесса при падении хэндлера (например, GitHub 403 / No valid schemas)
+                try {
+                    const result = await handler(enrichedArgs);
+                    return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
+                } catch (err) {
+                    const errorMessage = err instanceof Error ? err.message : String(err);
+                    return sendJsonResponse(res, { 
+                        jsonrpc: '2.0', 
+                        id, 
+                        error: { 
+                            code: -32603, 
+                            message: errorMessage || 'Internal handler error' 
+                        } 
+                    });
+                }
 
             case '/':  
             case '/graphql':
@@ -940,9 +960,12 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                     const result = await executeGraphQL(query, variables);
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify(result));
-                } catch (e) {
-                    res.writeHead(400);
-                    return res.end(JSON.stringify({ error: 'Invalid GraphQL request' }));
+                } catch (e: any) {
+                    // Возвращаем аккуратную GraphQL-ошибку вместо падения
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    return res.end(JSON.stringify({ 
+                        errors: [{ message: e?.message || 'Invalid GraphQL request' }] 
+                    }));
                 }
                 
             default:
