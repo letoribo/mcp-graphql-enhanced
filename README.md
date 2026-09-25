@@ -357,6 +357,19 @@ This server is fully containerized and optimized for long-running processes.
 | :--- | :--- | :--- |
 | ***Railway*** | `8080` | Set `PORT` in Variables and update Networking ingress port. |
 | ***Render*** | `10000` | Set `PORT` in Environment Variables. |
+| **Azure Container Apps** | `8080` | Set `PORT` and `ENABLE_HTTP=true` in Environment Variables, then enable Ingress targeting the same port.
+
+#### Quick Azure CLI Deployment
+
+```bash
+az containerapp up \
+  --name mcp-graphql-enhanced \
+  --resource-group mcp-graphql-rg \
+  --image ghcr.io/letoribo/mcp-graphql-enhanced:latest \
+  --ingress external \
+  --target-port 8080 \
+  --env-vars ENABLE_HTTP=true PORT=8080
+```
 
 [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new?template=https://github.com/letoribo/mcp-graphql-enhanced)
 

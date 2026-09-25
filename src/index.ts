@@ -269,13 +269,13 @@ async function performUpdate(
 
                     // 2. Fallback 1: Standard query without special parameters
                     if (!introspectionData) {
-                        console.log(`[SYNC-INFO] Retrying ${url} with standard introspection query...`);
+                        console.error(`[SYNC-INFO] Retrying ${url} with standard introspection query...`);
                         introspectionData = await fetchIntrospection();
                     }
 
                     // 3. Fallback 2: Minimal GraphQL v14 query + GET support
                     if (!introspectionData) {
-                        console.log(`[SYNC-INFO] Retrying ${url} with minimal GraphQL v14 query...`);
+                        console.error(`[SYNC-INFO] Retrying ${url} with minimal GraphQL v14 query...`);
                         introspectionData = await fetchIntrospection(undefined, true);
                     }
 
