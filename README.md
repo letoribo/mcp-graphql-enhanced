@@ -1,6 +1,6 @@
 # mcp-graphql-enhanced
 [![Glama](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced/badge)](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)
-[![mcp-graphql-enhanced MCP server](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced/badges/score.svg)](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced)[![Smithery Listed](https://img.shields.io/badge/smithery-listed-ff5601?style=flat&logo=rocket&logoColor=white)](https://smithery.ai/servers/letoribo/mcp-graphql-enhanced)[![npm version](https://img.shields.io/npm/v/@letoribo/mcp-graphql-enhanced?style=flat-square)](https://www.npmjs.com/package/@letoribo/mcp-graphql-enhanced)[![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.letoribo%2Fmcp--graphql--enhanced-007ec6?style=flat-square)](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.letoribo%2Fmcp-graphql-enhanced/versions/4.15.3)[![Agent Trust Fabric](https://trust.millenniums.ai/badge/mcp/io.github.letoribo/mcp-graphql-enhanced.svg)](https://trust.millenniums.ai/v/mcp/io.github.letoribo/mcp-graphql-enhanced)
+[![mcp-graphql-enhanced MCP server](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced/badges/score.svg)](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced)[![Smithery Listed](https://img.shields.io/badge/smithery-listed-ff5601?style=flat&logo=rocket&logoColor=white)](https://smithery.ai/servers/letoribo/mcp-graphql-enhanced)[![npm version](https://img.shields.io/npm/v/@letoribo/mcp-graphql-enhanced?style=flat-square)](https://www.npmjs.com/package/@letoribo/mcp-graphql-enhanced)[![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.letoribo%2Fmcp--graphql--enhanced-007ec6?style=flat-square)](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.letoribo%2Fmcp-graphql-enhanced/versions/4.15.3)
 
 An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
 > Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
@@ -450,6 +450,10 @@ If you’ve cloned the repo and built the project (npm run build → outputs to 
   }
 }
 ```
+## 🖥️ Live Playground Integration (`mcp-graphiql`)
+Ever wished your GraphQL queries generated inside Claude Desktop or Antigravity would auto-populate directly into your GraphiQL playground in real time?
+
+`@letoribo/mcp-graphql-enhanced` provides an HTTP/SSE bridge to [mcp-graphiql](https://github.com/letoribo/mcp-graphiql). Whenever your AI agent calls `query-graphql`, the payload streams instantly into an active GraphiQL tab, while `introspect-schema` hot-reloads and updates the Docs explorer in real time when switching endpoints.
 ## Resources
 - **graphql-schema**: The server exposes the GraphQL schema as a resource that clients can access. This is either the local schema file, a schema file hosted at a URL, or based on an introspection query.
 ## Available Tools

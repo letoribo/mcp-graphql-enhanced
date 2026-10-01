@@ -936,7 +936,7 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                     _request_meta: { host: requestHost }
                 };
 
-                // Защита от крэша процесса при падении хэндлера (например, GitHub 403 / No valid schemas)
+                // Protect process from crashing if handler fails (e.g., GitHub 403 / No valid schemas)
                 try {
                     const result = await handler(enrichedArgs);
                     return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
@@ -961,7 +961,7 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify(result));
                 } catch (e: any) {
-                    // Возвращаем аккуратную GraphQL-ошибку вместо падения
+                    // Return a clean GraphQL error instead of crashing
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     return res.end(JSON.stringify({ 
                         errors: [{ message: e?.message || 'Invalid GraphQL request' }] 
