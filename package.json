@@ -15,11 +15,20 @@
 	"license": "MIT",
 	"repository": "github:letoribo/mcp-graphql-enhanced",
 	"mcpName": "io.github.letoribo/mcp-graphql-enhanced",
+	"type": "module",
 	"main": "dist/index.js",
-	"module": "src/index.ts",
 	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		},
+		"./dist/*": "./dist/*",
+		"./package.json": "./package.json"
+	},
 	"bin": {
-		"mcp-graphql-enhanced": "dist/index.js"
+		"mcp-graphql-enhanced": "dist/bin.js"
 	},
 	"files": [
 		"dist",
@@ -28,16 +37,20 @@
 		"README.md"
 	],
 	"engines": {
-		"node": ">=18"
+		"node": ">=22.15.0"
 	},
 	"scripts": {
-		"dev": "tsx --watch src/index.ts",
-		"build": "tsc && chmod +x dist/index.js",
-		"start": "node dist/index.js",
+		"dev": "tsx --watch src/bin.ts",
+		"sync-version": "node scripts/sync-version.mjs",
+		"build": "npm run sync-version && tsc && chmod +x dist/bin.js",
+		"prepack": "npm run build",
+		"start": "node dist/bin.js",
+		"test": "tsx --test src/helpers/http-adapter.test.ts",
 		"format": "prettier --write ."
 	},
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.27.1",
+		"@whatwg-node/server": "^0.13.0",
 		"graphql": "^16.11.0",
 		"yargs": "17.7.2",
 		"zod": "3.25.30",

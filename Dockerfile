@@ -2,6 +2,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
+COPY scripts/ ./scripts/
 COPY src/ ./src/
 RUN npm ci && npm run build 
 
@@ -11,4 +12,4 @@ COPY package*.json ./
 RUN npm ci --only=production && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 USER node
-ENTRYPOINT ["node", "dist/index.js"]
+ENTRYPOINT ["node", "dist/bin.js"]

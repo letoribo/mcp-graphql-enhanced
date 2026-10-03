@@ -3,7 +3,7 @@
 [![mcp-graphql-enhanced MCP server](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced/badges/score.svg)](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced)[![Smithery Listed](https://img.shields.io/badge/smithery-listed-ff5601?style=flat&logo=rocket&logoColor=white)](https://smithery.ai/servers/letoribo/mcp-graphql-enhanced)[![npm version](https://img.shields.io/npm/v/@letoribo/mcp-graphql-enhanced?style=flat-square)](https://www.npmjs.com/package/@letoribo/mcp-graphql-enhanced)[![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.letoribo%2Fmcp--graphql--enhanced-007ec6?style=flat-square)](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.letoribo%2Fmcp-graphql-enhanced/versions/4.15.3)
 
 An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
-> Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
+> Drop-in replacement for `mcp-graphql` — with dynamic headers and robust variables parsing. Requires Node.js `>=22.15.0` (ESM-only).
 
 #### 🎯 What is mcp-graphql-enhanced?
 `mcp-graphql-enhanced` is a high-performance, federated GraphQL gateway designed to act as a workhorse for LLM agents. It bridges the gap between massive, complex GraphQL ecosystems and the context-limited environment of AI assistants. Unlike standard "all-or-nothing" introspection tools that crash under the weight of large schemas (like GitHub's or enterprise-grade Neo4j graphs), this server provides surgical control over how your agent perceives and interacts with your data.
@@ -259,6 +259,7 @@ npx @modelcontextprotocol/inspector \
 | `SCHEMA` | Path to a local GraphQL schema file or URL | - |
 | `MCP_PORT` | Port for the HTTP/JSON-RPC server. | `6274` |
 | `ENABLE_HTTP` | Enable HTTP transport: `auto` (default), `true`, or `false` | `auto` |
+| `CORS_ORIGINS` | Comma-separated extra browser Origins allowed for CORS (exact match). Defaults already include `http://localhost:$MCP_PORT`, `http://127.0.0.1:$MCP_PORT`, and `http://[::1]:$MCP_PORT`. | `` |
 **Note on `ENABLE_HTTP`:** 
 - `auto` (default): Automatically enables HTTP only when running in MCP Inspector...
 - `true`: Always enable HTTP server
@@ -397,6 +398,29 @@ If you want to test the bridge instantly without running local Node.js processes
 | **Cloudflare Workers** | Workers V8 (Global Edge) | [`mcp-graphql-enhanced.letoribo.workers.dev/mcp`](https://mcp-graphql-enhanced.letoribo.workers.dev/mcp) |
 | **Vercel** | Node.js Serverless | [`mcp-graphql-enhanced.vercel.app/mcp`](https://mcp-graphql-enhanced.vercel.app/mcp) |
 
+The HTTP surface (`/mcp`, GraphiQL, `/health`) is a `@whatwg-node/server` adapter (v0.13+, Node.js `>=22.15.0`). The package is ESM-only (`"type": "module"`). Import `httpAdapter` and mount it on the runtime you use:
+
+```ts
+import { createServer } from "node:http";
+import { httpAdapter } from "@letoribo/mcp-graphql-enhanced";
+
+createServer(httpAdapter).listen(6274);
+```
+
+```ts
+// Bun
+import { httpAdapter } from "@letoribo/mcp-graphql-enhanced";
+
+Bun.serve(httpAdapter);
+```
+
+```ts
+// Cloudflare Workers (requires nodejs_compat today)
+// The Fetch HTTP layer is platform-agnostic via @whatwg-node/server, but the
+// packaged app still reads process.env / local SCHEMA files through Node APIs.
+export { httpAdapter as default } from "@letoribo/mcp-graphql-enhanced";
+```
+
 > **Note:** Public gateways operate in shared environments. Remember to supply your explicit `endpoint` and `headers` in tool calls to ensure request isolation.
 
 ### 🖥️ Claude Desktop Configuration Examples
@@ -441,7 +465,7 @@ If you’ve cloned the repo and built the project (npm run build → outputs to 
   "mcpServers": {
     "mcp-graphql-enhanced": {
       "command": "node",
-      "args": ["dist/index.js"],
+      "args": ["dist/bin.js"],
       "env": {
         "ENDPOINT": "https://your-api.com/graphql",
         "ALLOW_MUTATIONS": "true"
