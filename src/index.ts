@@ -1,15 +1,22 @@
-#!/usr/bin/env node
+/**
+ * Library entry: MCP tools, schema sync, and WHATWG HTTP adapter.
+ * Mount `httpAdapter` from the package root; run the CLI via the package bin.
+ */
 
-import http, { IncomingMessage, ServerResponse } from "node:http";
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { parse } from "graphql/language";
+import {
+    buildClientSchema,
+    buildSchema,
+    getIntrospectionQuery,
+    isObjectType,
+    parse,
+    printSchema,
+    type GraphQLSchema,
+} from "graphql";
 import z from "zod";
-import { renderGraphiQL} from "./helpers/graphiql.js";
-import type { GraphQLSchema } from "graphql";
 
 // Helper imports
-import { checkDeprecatedArguments } from "./helpers/deprecation.js";
 import {
     introspectLocalSchema,
     introspectSpecificTypes,
@@ -18,23 +25,14 @@ import {
 import { registerTool } from "./helpers/tool-registry.js";
 import { registerPrompt } from "./helpers/prompt-registry.js";
 import { isQueryRelevantToNode } from "./helpers/routing.js";
-import { isDocker } from "./helpers/container.js";
-import path from "path";
+import { createMcpHttpAdapter } from "./helpers/http-adapter.js";
+export { createMcpHttpAdapter };
+import { version } from "./version.js";
 
-/**
- * Retrieves the current version from package.json
- */
-const getVersion = () => {
-    try {
-        const pkgPath = path.resolve(__dirname, "../package.json");
-        const pkg = require(pkgPath);
-        return pkg.version;
-    } catch {
-        return "dev-version";
-    }
-};
-
-checkDeprecatedArguments();
+const runtimeEnv: Record<string, string | undefined> =
+    typeof process !== "undefined" && process.env
+        ? (process.env as Record<string, string | undefined>)
+        : {};
 
 /**
  * Environment configuration schema - Strict validation
@@ -67,7 +65,7 @@ const EnvSchema = z.object({
         (val: unknown) => {
             // Railway/Render dynamically assign the port via the PORT env var.
             // If set, we use it to ensure the HTTP server binds to the platform's expected interface.
-            const port = process.env.PORT || val || 6274;
+            const port = runtimeEnv.PORT || val || 6274;
             return parseInt(port as string);
         },
         z.number().int().min(1024).max(65535)
@@ -76,14 +74,23 @@ const EnvSchema = z.object({
         .enum(["true", "false", "auto"])
         .transform((value: string) => {
             if (value === "auto") {
-                return !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
+                return !!(runtimeEnv.MCP_INSPECTOR || runtimeEnv.INSPECTOR_PORT || runtimeEnv.INSPECTOR_URL);
             }
             return value === "true";
         })
         .default("auto"),
+    CORS_ORIGINS: z
+        .string()
+        .default("")
+        .transform((val: string) =>
+            val
+                .split(",")
+                .map((origin) => origin.trim())
+                .filter(Boolean),
+        ),
 });
 
-const env = EnvSchema.parse(process.env);
+export const env = EnvSchema.parse(runtimeEnv);
 
 /**
  * Build dynamic auth headers for nodes that require credentials
@@ -94,7 +101,7 @@ function getEffectiveHeaders(): Record<string, string> {
         : {};
 
     return {
-        "User-Agent": `MCP-GraphQL-Enhanced/${getVersion()}`,
+        "User-Agent": `MCP-GraphQL-Enhanced/${version}`,
         "Accept": "application/json",
         "Content-Type": "application/json",
         ...rawHeaders
@@ -104,9 +111,9 @@ function getEffectiveHeaders(): Record<string, string> {
 /**
  * Initialize MCP Server with full capabilities
  */
-const server = new McpServer({
+export const server = new McpServer({
     name: env.NAME,
-    version: getVersion(),
+    version,
     description: "Federated GraphQL-to-MCP bridge with broadcast introspection and full type visibility."
 }, {
     capabilities: {
@@ -115,60 +122,180 @@ const server = new McpServer({
     }
 });
 
-// --- GLOBAL STATE MANAGEMENT ---
-let cachedSDL: string | null = null;
-let cachedSchemaObject: any = null;
-let cachedSchemas: Array<GraphQLSchema & { _originUrl?: string }> = [];
-let schemaLoadError: Error | null = null;
-let isUpdating = false;
-let updatePromise: Promise<string> | null = null;
+// --- SCHEMA STATE (keyed by endpoint + all effective headers) ---
+type SchemaWithOrigin = GraphQLSchema & { _originUrl?: string };
+type SchemaCacheEntry = {
+    cachedSDL: string | null;
+    cachedSchemaObject: any;
+    cachedSchemas: SchemaWithOrigin[];
+    schemaLoadError: Error | null;
+    nodeManifest: any[];
+};
+
+const SCHEMA_CACHE_MAX_ENTRIES = 32;
+const SCHEMA_INFLIGHT_MAX = 16;
+const INTROSPECTION_FETCH_TIMEOUT_MS = 15_000;
+const schemaCache = new Map<string, SchemaCacheEntry>();
+const inflightUpdates = new Map<string, Promise<SchemaCacheEntry>>();
+
+function headersFingerprint(headers: Record<string, string>): string {
+    // Structural encoding avoids delimiter collisions (e.g. values containing "&" / "=").
+    return JSON.stringify(
+        Object.keys(headers)
+            .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
+            .map((k) => [k.toLowerCase(), headers[k]]),
+    );
+}
+
+function schemaCacheKey(
+    endpoint: string,
+    customHeaders?: Record<string, string>,
+): string {
+    const headers = { ...getEffectiveHeaders(), ...customHeaders };
+    return `${endpoint.trim()}::${headersFingerprint(headers)}`;
+}
+
+function rememberSchemaEntry(key: string, entry: SchemaCacheEntry): void {
+    // Refresh insertion order for a simple LRU eviction policy.
+    schemaCache.delete(key);
+    schemaCache.set(key, entry);
+    while (schemaCache.size > SCHEMA_CACHE_MAX_ENTRIES) {
+        const oldest = schemaCache.keys().next().value;
+        if (oldest === undefined) break;
+        schemaCache.delete(oldest);
+    }
+}
+
+function getOrCreateSchemaEntry(key: string): SchemaCacheEntry {
+    let entry = schemaCache.get(key);
+    if (!entry) {
+        entry = {
+            cachedSDL: null,
+            cachedSchemaObject: null,
+            cachedSchemas: [],
+            schemaLoadError: null,
+            nodeManifest: [],
+        };
+        rememberSchemaEntry(key, entry);
+    } else {
+        rememberSchemaEntry(key, entry);
+    }
+    return entry;
+}
+
+/** Return a ready cache entry without starting introspection. */
+function peekSchemaEntry(
+    endpoint: string,
+    customHeaders?: Record<string, string>,
+): SchemaCacheEntry | null {
+    const entry = schemaCache.get(schemaCacheKey(endpoint, customHeaders));
+    return entry?.cachedSchemaObject ? entry : null;
+}
 
 /**
- * Schema Fetcher with dependency tracking
+ * Coalesce in-flight schema loads by key, bound concurrent unique loads,
+ * and ensure failed/finished keys are always removed from the map.
  */
-async function getSchema(
-    force: boolean = false, 
-    requestedTypes?: string[], 
-    typeDepth: number = 2,
-    customHeaders?: Record<string, string>
-): Promise<string | GraphQLSchema> {
-    if (isUpdating && updatePromise) {
-        return await updatePromise;
+async function scheduleSchemaUpdate(
+    key: string,
+    entry: SchemaCacheEntry,
+    typeDepth: number,
+    customHeaders: Record<string, string> | undefined,
+    endpoint: string,
+): Promise<SchemaCacheEntry> {
+    const existing = inflightUpdates.get(key);
+    if (existing) {
+        return await existing;
     }
 
-    if (cachedSchemaObject && !force) {
-        if (requestedTypes && cachedSchemas.length > 0) {
-            const allTypes = new Set(cachedSchemas.flatMap(s => Object.keys(s.getTypeMap())));
-            const missing = requestedTypes.filter(t => !allTypes.has(t));
-            if (missing.length > 0) return await performUpdate(typeDepth, customHeaders);
-        }
-        return cachedSchemaObject;
+    if (inflightUpdates.size >= SCHEMA_INFLIGHT_MAX) {
+        throw new Error(
+            `Too many concurrent schema loads (${SCHEMA_INFLIGHT_MAX}); retry after in-flight work completes.`,
+        );
     }
 
-    if (force) schemaLoadError = null;
-    if (schemaLoadError) throw schemaLoadError;
-
-    updatePromise = performUpdate(typeDepth, customHeaders);
+    const promise = performUpdate(entry, typeDepth, customHeaders, endpoint);
+    inflightUpdates.set(key, promise);
     try {
-        await updatePromise;
-        return cachedSchemaObject;
+        const updated = await promise;
+        rememberSchemaEntry(key, updated);
+        return updated;
+    } catch (error) {
+        schemaCache.delete(key);
+        throw error;
     } finally {
-        updatePromise = null;
+        inflightUpdates.delete(key);
     }
+}
+
+/**
+ * Schema Fetcher with dependency tracking.
+ * In-flight work and cache entries are keyed by endpoint + all effective headers
+ * so concurrent shared-gateway requests cannot share the wrong schema.
+ */
+export async function getSchema(
+    force: boolean = false,
+    requestedTypes?: string[],
+    typeDepth: number = 2,
+    customHeaders?: Record<string, string>,
+    endpointOverride?: string,
+): Promise<SchemaCacheEntry> {
+    const endpoint = (endpointOverride?.trim() || env.ENDPOINT).trim();
+    const key = schemaCacheKey(endpoint, customHeaders);
+    const entry = getOrCreateSchemaEntry(key);
+
+    const inflight = inflightUpdates.get(key);
+    if (inflight) {
+        return await inflight;
+    }
+
+    if (entry.cachedSchemaObject && !force) {
+        if (requestedTypes && entry.cachedSchemas.length > 0) {
+            const allTypes = new Set(
+                entry.cachedSchemas.flatMap((s) => Object.keys(s.getTypeMap())),
+            );
+            const missing = requestedTypes.filter((t) => !allTypes.has(t));
+            if (missing.length > 0) {
+                return scheduleSchemaUpdate(
+                    key,
+                    entry,
+                    typeDepth,
+                    customHeaders,
+                    endpoint,
+                );
+            }
+        }
+        return entry;
+    }
+
+    if (force) entry.schemaLoadError = null;
+    // Failed loads are not retained in the cache; if one slipped through, drop it and retry.
+    if (entry.schemaLoadError) {
+        schemaCache.delete(key);
+    }
+
+    const freshEntry = getOrCreateSchemaEntry(key);
+    return scheduleSchemaUpdate(
+        key,
+        freshEntry,
+        typeDepth,
+        customHeaders,
+        endpoint,
+    );
 }
 
 /**
  * Federated Update: Orchestrates introspection across all endpoints
  */
 async function performUpdate(
-    typeDepth: number = 2, 
-    customHeaders?: Record<string, string>
-): Promise<string> {
-    isUpdating = true;
+    entry: SchemaCacheEntry,
+    typeDepth: number = 2,
+    customHeaders?: Record<string, string>,
+    endpoint: string = env.ENDPOINT,
+): Promise<SchemaCacheEntry> {
     const startTime = Date.now();
 
     try {
-        const { buildClientSchema, getIntrospectionQuery, printSchema, buildASTSchema, parse: gqlParse, isObjectType } = require("graphql");
         let tempSchemas: any[] = [];
         const manifest: any[] = [];
 
@@ -181,13 +308,15 @@ async function performUpdate(
         if (env.SCHEMA) {
             let sdl: string;
             if (env.SCHEMA.startsWith("http")) {
-                const response = await fetch(env.SCHEMA);
+                const response = await fetch(env.SCHEMA, {
+                    signal: AbortSignal.timeout(INTROSPECTION_FETCH_TIMEOUT_MS),
+                });
                 if (!response.ok) throw new Error(`Remote_SDL_Fetch_Failed: ${response.statusText}`);
                 sdl = await response.text();
             } else {
                 sdl = await introspectLocalSchema(env.SCHEMA);
             }
-            const localSchema = buildASTSchema(gqlParse(sdl));
+            const localSchema = buildSchema(sdl) as SchemaWithOrigin;
             localSchema._originUrl = "local-sdl";
             tempSchemas = [localSchema];
             
@@ -197,7 +326,7 @@ async function performUpdate(
                 domainEntities: Object.keys(localSchema.getTypeMap()).filter(t => !t.startsWith('__'))
             });
         } else {
-            const endpoints = env.ENDPOINT.split(',').map(url => url.trim());
+            const endpoints = endpoint.split(',').map(url => url.trim());
             
             const results = await Promise.all(endpoints.map(async (url) => {
                 try {
@@ -225,7 +354,8 @@ async function performUpdate(
                             let res = await fetch(url, {
                                 method: "POST",
                                 headers: cleanHeaders,
-                                body: JSON.stringify({ query: queryStr })
+                                body: JSON.stringify({ query: queryStr }),
+                                signal: AbortSignal.timeout(INTROSPECTION_FETCH_TIMEOUT_MS),
                             });
 
                             // 2. GET Fallback (specifically for fragile serverless endpoints like SWAPI Netlify)
@@ -234,7 +364,8 @@ async function performUpdate(
                                 const getUrl = `${url}?query=${encodeURIComponent(queryStr.replace(/\s+/g, ' ').trim())}`;
                                 res = await fetch(getUrl, {
                                     method: "GET",
-                                    headers: { "Accept": "application/json" }
+                                    headers: { "Accept": "application/json" },
+                                    signal: AbortSignal.timeout(INTROSPECTION_FETCH_TIMEOUT_MS),
                                 });
                             }
 
@@ -285,7 +416,7 @@ async function performUpdate(
                         return null;
                     }
 
-                    const schemaInstance = buildClientSchema(introspectionData);
+                    const schemaInstance = buildClientSchema(introspectionData) as SchemaWithOrigin;
                     schemaInstance._originUrl = url;
 
                     const typeMap = schemaInstance.getTypeMap();
@@ -331,13 +462,12 @@ async function performUpdate(
             throw new Error("No valid schemas could be retrieved.");
         }
 
-        cachedSchemas = tempSchemas;
-        (global as any).nodeManifest = manifest;
+        entry.cachedSchemas = tempSchemas;
+        entry.nodeManifest = manifest;
+        entry.cachedSchemaObject = entry.cachedSchemas[0];
+        const currentSDL = printSchema(entry.cachedSchemaObject);
 
-        cachedSchemaObject = cachedSchemas[0]; 
-        const currentSDL = printSchema(cachedSchemaObject);
-
-        const typeMap = cachedSchemaObject.getTypeMap();
+        const typeMap = entry.cachedSchemaObject.getTypeMap();
         const businessTypes = Object.keys(typeMap).filter(typeName => {
             const type = typeMap[typeName];
             return !typeName.startsWith('__') && 
@@ -345,30 +475,28 @@ async function performUpdate(
                    isObjectType(type);
         });
 
-        if (currentSDL !== cachedSDL) {
-            cachedSDL = currentSDL;
+        if (currentSDL !== entry.cachedSDL) {
+            entry.cachedSDL = currentSDL;
             const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-            const sourceInfo = env.SCHEMA ? 'SDL File' : `${cachedSchemas.length} Active Nodes`;
-            
-            return [
+            const sourceInfo = env.SCHEMA ? 'SDL File' : `${entry.cachedSchemas.length} Active Nodes`;
+            console.error([
                 `✨ SCHEMA EVOLVED (${duration}s)`,
                 `📊 Source: ${sourceInfo}`,
                 `🧬 Types: ${businessTypes.length}`,
                 `---`,
                 `The bridge has updated the graph model.`
-            ].join('\n');
+            ].join('\n'));
         }
 
-        return `✅ Status: Schema stable (${businessTypes.length} types).`;
+        return entry;
 
     } catch (error: any) {
         console.error(`[SYNC-WARN] Fetch failed:`, error?.message || error);
         if (error?.cause) {
             console.error(`[SYNC-WARN Cause]:`, error.cause);
         }
+        entry.schemaLoadError = error instanceof Error ? error : new Error(String(error));
         throw error;
-    } finally {
-        isUpdating = false;
     }
 }
 
@@ -391,9 +519,9 @@ export const queryGraphqlHandler = async ({
     variables?: string, 
     headers?: string, 
     endpoint?: string,
-    _request_meta?: { host: string }
+    _request_meta?: { host?: string | null; waitUntil?: (promise: Promise<void> | void) => void }
 }) => {
-    if (process.send) {
+    if (typeof process !== "undefined" && typeof process.send === "function") {
         process.send({
             type: 'MCP_TOOL_CALL',
             toolName: 'query-graphql',
@@ -415,18 +543,39 @@ export const queryGraphqlHandler = async ({
         const runtimeHeaders = headers ? JSON.parse(headers) : {};
         const fetchVariables = variables ? (typeof variables === 'string' ? JSON.parse(variables) : variables) : undefined;
 
-        if (endpoint && endpoint.trim().length > 0 && endpoint.trim() !== env.ENDPOINT) {
-            env.ENDPOINT = endpoint.trim();
-            cachedSchemas = [];
-            await getSchema(true);
+        const activeEndpoint =
+            endpoint && endpoint.trim().length > 0 ? endpoint.trim() : env.ENDPOINT;
+
+        // Use a cached manifest immediately when available. Kick schema sync in
+        // the background so hanging/disabled introspection cannot delay the query.
+        // Prefer whatwg-node / Workers waitUntil so the runtime keeps the process
+        // (or isolate) alive until sync settles; fall back to fire-and-forget.
+        const schemaEntry = peekSchemaEntry(activeEndpoint, runtimeHeaders);
+        const schemaSync = getSchema(
+            false,
+            undefined,
+            2,
+            runtimeHeaders,
+            activeEndpoint,
+        ).then(
+            () => undefined,
+            (schemaErr: any) => {
+                console.error(
+                    `[QUERY-WARN] Background schema sync failed: ${schemaErr?.message || schemaErr}`,
+                );
+            },
+        );
+        if (_request_meta?.waitUntil) {
+            _request_meta.waitUntil(schemaSync);
+        } else {
+            void schemaSync;
         }
 
-        const manifest = (global as any).nodeManifest || [];
-        const activeEndpointString = endpoint && endpoint.trim().length > 0 ? endpoint : env.ENDPOINT;
-        const allEndpoints = activeEndpointString.split(',').map(url => url.trim());
+        const manifest = schemaEntry?.nodeManifest || [];
+        const allEndpoints = activeEndpoint.split(',').map(url => url.trim());
 
         let endpoints = allEndpoints;
-        if (allEndpoints.length > 1) {
+        if (allEndpoints.length > 1 && manifest.length > 0) {
             endpoints = allEndpoints.filter(url => {
                 const nodeMeta = manifest.find((m: any) => m.endpoint === url);
                 if (!nodeMeta) return true;
@@ -622,11 +771,10 @@ export const introspectHandler = async (args: {
         }
     }
 
-    const hasEndpointOverride = args.endpoint && args.endpoint.trim().length > 0;
-    if (hasEndpointOverride) {
-        env.ENDPOINT = args.endpoint!.trim();
-        cachedSchemas = [];
-    }
+    const hasEndpointOverride = !!(args.endpoint && args.endpoint.trim().length > 0);
+    const activeEndpoint = hasEndpointOverride
+        ? args.endpoint!.trim()
+        : env.ENDPOINT;
     
     let { typeNames, typeDepth } = args;
     let cleanTypeNames: string[] | undefined;
@@ -659,16 +807,23 @@ export const introspectHandler = async (args: {
         };
     }
 
-    const depth = typeDepth ?? 2;   
-    const forceRefresh = hasEndpointOverride || Object.keys(runtimeHeaders).length > 0;
-    await getSchema(forceRefresh, cleanTypeNames, depth, runtimeHeaders);
+    const depth = typeDepth ?? 2;
+    // Cache key (endpoint + headers) decides hits/misses; reserve force-refresh
+    // for an explicit refresh operation rather than every endpoint/header override.
+    const schemaEntry = await getSchema(
+        false,
+        cleanTypeNames,
+        depth,
+        runtimeHeaders,
+        activeEndpoint,
+    );
 
-    if (cachedSchemas.length === 0) {
+    if (schemaEntry.cachedSchemas.length === 0) {
         return { content: [{ type: "text" as const, text: "❌ System is not initialized." }] };
     }
 
     if (!typeNames || typeNames.length === 0) {
-        const manifest = (global as any).nodeManifest || [];
+        const manifest = schemaEntry.nodeManifest || [];
         const body = manifest.map((m: any) => {
             const capabilities = (Array.isArray(m.availableMutations) && m.availableMutations.length > 0) 
                 ? m.availableMutations.join(', ') 
@@ -692,7 +847,7 @@ export const introspectHandler = async (args: {
     const resolution: any = {};
     for (const name of (cleanTypeNames || [])) {
         const variants: any[] = [];
-        for (const schema of cachedSchemas) {
+        for (const schema of schemaEntry.cachedSchemas) {
             const found = introspectSpecificTypes(schema, [name], depth); 
             if (found && found[name]) {
                 variants.push({ origin: schema._originUrl, data: found[name] });
@@ -761,39 +916,17 @@ registerTool(
 // --- PROMPT REGISTRY ---
 registerPrompt(server, "system-health", "Check status of all nodes", "Perform a simple __typename query on all endpoints.");
 
-let sessionMeta: Record<string, any> = {};
-
-function updateSession(params: any) {
-    if (params?._meta) {
-        sessionMeta = { ...params._meta };
-    }
-}
-
-function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 200) {
-    const responseBody: any = { ...data };
-    
-    if (Object.keys(sessionMeta).length > 0) {
-        responseBody._meta = sessionMeta;
-    }
-
-    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(responseBody));
-}
-
-const readBody = (req: IncomingMessage): Promise<string> => 
-    new Promise((resolve) => {
-        let body = '';
-        req.on('data', chunk => body += chunk);
-        req.on('end', () => resolve(body));
-    });
-
-async function executeGraphQL(query: string, variables: any) {
+async function executeGraphQL(
+    query: string,
+    variables: any,
+    requestMeta?: { host?: string | null; waitUntil?: (promise: Promise<void> | void) => void },
+) {
     const handler = toolHandlers.get("query-graphql");
     if (!handler) {
         throw new Error("GraphQL handler not found");
     }
 
-    const mcpResult = await handler({ query, variables });
+    const mcpResult = await handler({ query, variables, _request_meta: requestMeta });
     
     if (mcpResult.isError) {
         return { errors: [{ message: mcpResult.content[0].text }] };
@@ -802,262 +935,23 @@ async function executeGraphQL(query: string, variables: any) {
     const resultText = mcpResult.content[0].text;
     const parsed = JSON.parse(resultText);
     return parsed.data ? parsed : { data: parsed };
-}    
-
-// --- HTTP ADAPTER FOR GRAPHIQL & NATIVE GRAPHQL ---
-async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
-
-    const url = new URL(req.url || '', `http://${req.headers.host}`);
-
-    if (req.method === 'GET') {
-        switch (url.pathname) {
-            case '/':
-            case '/graphql':    
-            case '/graphiql':
-                res.writeHead(200, { 'Content-Type': 'text/html' });
-                const host = req.headers.host || ''; 
-                const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
-                const endpoint = isLocal 
-                    ? `http://localhost:${env.MCP_PORT}/mcp` 
-                    : '/mcp';
-                    
-                return res.end(renderGraphiQL(endpoint, env.HEADERS));
-            
-            case '/health':
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ status: 'ok', version: getVersion() }));
-
-            default:
-                res.writeHead(404, { 'Content-Type': 'application/json' });
-                return res.end(JSON.stringify({ error: 'Not Found' }));
-        }
-    }
-
-    if (req.method === 'POST') {
-        const body = await readBody(req);
-
-        switch (url.pathname) {
-            case '/mcp':
-                let payload: any;
-                try { 
-                    payload = JSON.parse(body); 
-                } catch (e: any) { 
-                    return sendJsonResponse(res, { jsonrpc: '2.0', error: { code: -32700, message: `Parse error: ${e.message}` } }, 400); 
-                }
-
-                const { method, id, params } = payload;
-
-                if (method === "initialize") {
-                    return sendJsonResponse(res, {
-                        jsonrpc: '2.0',
-                        id,
-                        result: {
-                            protocolVersion: "2025-11-25",
-                            capabilities: { tools: {}, prompts: {} },
-                            serverInfo: { name: env.NAME, version: getVersion() }
-                        }
-                    });
-                }
-
-                if (method?.startsWith("notifications/")) {
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    return res.end();
-                }
-
-                if (method === "ping") {
-                    return sendJsonResponse(res, { jsonrpc: '2.0', id, result: {} });
-                }
-
-                updateSession(payload.params);
-
-                if (!payload.method && payload.query) {
-                    const handler = toolHandlers.get("query-graphql");
-                    if (handler) {
-                        try {
-                            const mcpResult = await handler({ 
-                                query: payload.query, 
-                                variables: payload.variables 
-                            });
-                            
-                            const resultText = mcpResult.content[0].text;
-                            if (mcpResult.isError || resultText.startsWith('❌')) {
-                                return sendJsonResponse(res, { errors: [{ message: resultText }] }, 400);
-                            }
-
-                            try {
-                                const parsed = JSON.parse(resultText);
-                                const graphQLResponse = parsed.data ? parsed : { data: parsed };
-                                return sendJsonResponse(res, graphQLResponse);
-                            } catch (e: any) {
-                                return sendJsonResponse(res, { data: { result: resultText } });
-                            }
-                        } catch (err: any) {
-                            return sendJsonResponse(res, { errors: [{ message: err.message || 'Execution error' }] }, 500);
-                        }
-                    }
-                }
-
-                if (method === "tools/list" || method === "list-tools") {
-                    return sendJsonResponse(res, { 
-                        jsonrpc: '2.0', 
-                        id, 
-                        result: { tools: registeredToolsMetadata } 
-                    });
-                }
-
-                if (method === "prompts/list" || method === "list-prompts") {
-                    return sendJsonResponse(res, {
-                        jsonrpc: '2.0',
-                        id,
-                        result: { prompts: [] }
-                    });
-                }
-
-                const target = (method === "call-tool" || method === "tools/call") ? params?.name : method;
-                const args = (method === "call-tool" || method === "tools/call") ? params?.arguments : params;
-
-                const handler = toolHandlers.get(target);
-                if (!handler) {
-                    return sendJsonResponse(res, { 
-                        jsonrpc: '2.0', 
-                        id, 
-                        error: { code: -32601, message: `Method ${target} not found` } 
-                    });
-                }
-
-                const requestHost = req.headers.host;
-                const enrichedArgs = { 
-                    ...args, 
-                    _request_meta: { host: requestHost }
-                };
-
-                // Protect process from crashing if handler fails (e.g., GitHub 403 / No valid schemas)
-                try {
-                    const result = await handler(enrichedArgs);
-                    return sendJsonResponse(res, { jsonrpc: '2.0', id, result });
-                } catch (err) {
-                    const errorMessage = err instanceof Error ? err.message : String(err);
-                    return sendJsonResponse(res, { 
-                        jsonrpc: '2.0', 
-                        id, 
-                        error: { 
-                            code: -32603, 
-                            message: errorMessage || 'Internal handler error' 
-                        } 
-                    });
-                }
-
-            case '/':  
-            case '/graphql':
-            case '/graphiql':
-                try {
-                    const { query, variables } = JSON.parse(body);
-                    const result = await executeGraphQL(query, variables);
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify(result));
-                } catch (e: any) {
-                    // Return a clean GraphQL error instead of crashing
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    return res.end(JSON.stringify({ 
-                        errors: [{ message: e?.message || 'Invalid GraphQL request' }] 
-                    }));
-                }
-                
-            default:
-                res.writeHead(404);
-                return res.end(JSON.stringify({ error: 'Endpoint not found' }));
-        }
-    }
 }
 
-// --- SERVER LIFECYCLE ---
-async function main() {
-    const isInspector = !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
-    const shouldStartHttp = env.ENABLE_HTTP && !isInspector;
+/**
+ * Shared WHATWG Fetch HTTP adapter, usable on Node, Cloudflare Workers, Bun, etc.
+ */
+const defaultCorsOrigins = [
+    `http://localhost:${env.MCP_PORT}`,
+    `http://127.0.0.1:${env.MCP_PORT}`,
+    `http://[::1]:${env.MCP_PORT}`,
+];
 
-    // Attach STDIO when stdin is a piped stream (!isTTY)
-    const isPipe = typeof process !== "undefined" && process.stdin && !process.stdin.isTTY;
-    if (isPipe) {
-        const stdioTransport = new StdioServerTransport();
-        
-        if (shouldStartHttp) {
-            // In HTTP mode, initialize STDIO in the background without blocking execution
-            // or registering process.exit(0) on stdin close (prevents instant exits in cloud containers like Render).
-            server.connect(stdioTransport).catch((err) => {
-                console.error("[WARN] STDIO transport failed in dual mode:", err);
-            });
-        } else {
-            // In pure STDIO mode, connect synchronously and attach normal lifecycle handlers
-            await server.connect(stdioTransport);
-            process.stdin.on('close', () => process.exit(0));
-        }
-    }
-    
-    if (shouldStartHttp) {
-        const httpSrv = http.createServer(handleHttpRequest);
-        
-        const start = (port: number) => {
-            httpSrv.removeAllListeners('error');
-            httpSrv.removeAllListeners('listening');
-
-            httpSrv.once('error', (e: any) => {
-                if (e.code === 'EADDRINUSE') {
-                    if (isDocker()) {
-                        // Port incrementing is ineffective inside Docker due to fixed host mapping (-p)
-                        console.error(`[FATAL] Port ${port} is already in use. Port fallback is disabled in Docker. Exiting...`);
-                        process.exit(1);
-                    } else {
-                        // Running natively on host: fall back to the next available port
-                        console.error(`[WARN] Port ${port} is in use. Trying ${port + 1}...`);
-                        httpSrv.close(() => start(port + 1));
-                    }
-                } else {
-                    console.error(`[FATAL] Server error: ${e.message}`);
-                    process.exit(1);
-                }
-            });
-
-            httpSrv.listen(port, '0.0.0.0', () => {
-                const address = httpSrv.address();
-                const actualPort = typeof address === 'object' && address ? address.port : port;
-                console.error(`[SYSTEM] Federated Bridge active on port ${actualPort}`);
-                console.error(`📡 MCP Endpoint: http://localhost:${actualPort}/mcp`);
-                if (process.env.ENABLE_HTTP === "true") {
-                    console.error(`🎨 GraphiQL: http://localhost:${actualPort}/graphiql`);
-                }
-            });
-        };
-
-        start(env.MCP_PORT);
-    }
-
-    console.error(`[BOOT] Initializing schema sync for: ${env.ENDPOINT}`);
-    getSchema(true).catch(err => console.error(`[BOOT-WARN] Initial sync failed: ${err.message}`));
-}
-
-process.on('SIGINT', () => { console.error('[SYSTEM] Shutting down...'); process.exit(0); });
-process.on('SIGTERM', () => { process.exit(0); });
-
-if (!("WebSocketPair" in globalThis) && !process.env.CF_PAGES) {
-    // We check if main exists as a function in the scope before calling it
-    const globalContext = globalThis as any;
-    if (typeof globalContext.main === 'function') {
-        globalContext.main().catch((err: any) => {
-            console.error(`[FATAL] Startup failed: ${err.message}`);
-            process.exit(1);
-        });
-    } else {
-        // Fallback case: if main() was renamed or moved elsewhere in your file
-        try {
-            // @ts-ignore - Bypasses compiler strict-checks for local execution blocks
-            if (typeof main === 'function') { main(); }
-        } catch (e) {
-            console.log("[SYSTEM] Running inside non-monolithic runtime boundary.");
-        }
-    }
-}
+export const httpAdapter = createMcpHttpAdapter({
+    name: env.NAME,
+    headers: env.HEADERS,
+    version,
+    corsOrigins: [...defaultCorsOrigins, ...env.CORS_ORIGINS],
+    toolHandlers,
+    registeredToolsMetadata,
+    executeGraphQL,
+});
