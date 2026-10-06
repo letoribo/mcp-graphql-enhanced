@@ -1,6 +1,6 @@
 {
 	"name": "@letoribo/mcp-graphql-enhanced",
-	"description": "Enhanced MCP server for GraphQL with dynamic headers and robust variables parsing — a drop-in replacement for mcp-graphql.",
+	"description": "mcprush-claim-graphql-enhanced-mcp-724161ab5a07405ea6ceb4f7",
 	"keywords": [
 		"mcp",
 		"graphql",
@@ -52,5 +52,5 @@
 		"tsx": "^4.21.0",
 		"typescript": "5.8.3"
 	},
-	"version": "4.15.3"
+	"version": "4.15.4"
 }

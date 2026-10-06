@@ -178,3 +178,6 @@ dist/
 
 # GraphQL schema for debugging
 /schema.graphql
+
+# Local Netlify folder
+.netlify
