@@ -763,12 +763,6 @@ registerPrompt(server, "system-health", "Check status of all nodes", "Perform a 
 
 let sessionMeta: Record<string, any> = {};
 
-function updateSession(params: any) {
-    if (params?._meta) {
-        sessionMeta = { ...params._meta };
-    }
-}
-
 function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 200) {
     const responseBody: any = { ...data };
     
@@ -872,8 +866,6 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
                 if (method === "ping") {
                     return sendJsonResponse(res, { jsonrpc: '2.0', id, result: {} });
                 }
-
-                updateSession(payload.params);
 
                 if (!payload.method && payload.query) {
                     const handler = toolHandlers.get("query-graphql");
