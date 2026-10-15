@@ -1,6 +1,6 @@
 # mcp-graphql-enhanced
 [![Glama](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced/badge)](https://glama.ai/mcp/servers/@letoribo/mcp-graphql-enhanced)
-[![mcp-graphql-enhanced MCP server](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced/badges/score.svg)](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced)[![Smithery Listed](https://img.shields.io/badge/smithery-listed-ff5601?style=flat&logo=rocket&logoColor=white)](https://smithery.ai/servers/letoribo/mcp-graphql-enhanced)[![npm version](https://img.shields.io/npm/v/@letoribo/mcp-graphql-enhanced?style=flat-square)](https://www.npmjs.com/package/@letoribo/mcp-graphql-enhanced)[![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.letoribo%2Fmcp--graphql--enhanced-007ec6?style=flat-square)](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.letoribo%2Fmcp-graphql-enhanced/versions/4.15.3)[![Agent Trust Fabric](https://trust.redthreadsec.com/badge/mcp/io.github.letoribo/mcp-graphql-enhanced.svg)](https://trust.redthreadsec.com/v/mcp/io.github.letoribo/mcp-graphql-enhanced)
+[![mcp-graphql-enhanced MCP server](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced/badges/score.svg)](https://glama.ai/mcp/servers/letoribo/mcp-graphql-enhanced)[![Smithery Listed](https://img.shields.io/badge/smithery-listed-ff5601?style=flat&logo=rocket&logoColor=white)](https://smithery.ai/servers/letoribo/mcp-graphql-enhanced)[![npm version](https://img.shields.io/npm/v/@letoribo/mcp-graphql-enhanced?style=flat-square)](https://www.npmjs.com/package/@letoribo/mcp-graphql-enhanced)[![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.letoribo%2Fmcp--graphql--enhanced-007ec6?style=flat-square)](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.letoribo%2Fmcp-graphql-enhanced/versions/latest)[![Agent Trust Fabric](https://trust.redthreadsec.com/badge/mcp/io.github.letoribo/mcp-graphql-enhanced.svg)](https://trust.redthreadsec.com/v/mcp/io.github.letoribo/mcp-graphql-enhanced)
 
 An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-world interoperability issues between LLMs and GraphQL APIs.
 > Drop-in replacement for `mcp-graphql` — with dynamic headers, robust variables parsing, and zero breaking changes.
@@ -9,7 +9,7 @@ An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-
 `mcp-graphql-enhanced` is a high-performance, federated GraphQL gateway designed to act as a workhorse for LLM agents. It bridges the gap between massive, complex GraphQL ecosystems and the context-limited environment of AI assistants. Unlike standard "all-or-nothing" introspection tools that crash under the weight of large schemas (like GitHub's or enterprise-grade Neo4j graphs), this server provides surgical control over how your agent perceives and interacts with your data.
 
 #### 💡 Why do you need it?
-If you have ever seen the`<error>Tool result is too large</error>`while trying to introspect your API, you are already hitting the limits of standard MCP implementations. Here is why mcp-graphql-enhanced is the industry-standard choice for professional environments:
+If you have ever seen the`<error>Tool result is too large</error>`while trying to introspect your API, you are already hitting the limits of standard MCP implementations. Here is why mcp-graphql-enhanced is a practical choice for professional environments:
 
 Avoid the 1MB Ceiling: It shifts the responsibility for scope from the server to the caller. Instead of a unilateral "everything or nothing" dump, you get granular control via typeNames and typeDepth parameters.
 
@@ -17,7 +17,7 @@ Surgical Precision: You can selectively introspect only the nodes you need (e.g.
 
 Predictability over Immunity: It doesn't promise "unlimited" capacity—it promises predictability. In enterprise systems, you need a tool that lets you navigate the graph surgically and fail predictably if you overstep, rather than a "black box" that dies on you the moment the schema grows.
 
-Proof of Performance: See a real-world demonstration of the gateway bypassing standard architectural limits during a live diagnostic test against the GitHub API:
+Demonstration: See a real-world diagnostic test against the GitHub API that compares scoped and monolithic introspection:
 🔗 Diagnostic Case Study: Scoped vs. Monolithic Introspection ([Shared Chat](https://claude.ai/share/5b845f72-809a-42ee-8083-361314126069))
 
 ## 💬 Community & Support
@@ -48,7 +48,7 @@ Simply pass the optional `endpoint` parameter in `query-graphql` or `introspect-
 * **Zero Downtime**: Hot-swaps the underlying schema and clears internal caches instantly.
 * **Context Preservation**: Keeps the MCP connection open while shifting queries between different environments (e.g., switching from a Discord ingest node to a Neo4j graph database).
 
-## 🚀 Federated Multi-Node Architecture (v3.9.1+)
+## 🚀 Federated Multi-Node Architecture (since v3.9.1)
 The server operates as a Federated GraphQL Gateway, merging independent nodes into a unified system.
 
 *   **Zero Breaking Changes**: If you provide a single URL in `ENDPOINT`, the server behaves exactly as before.
@@ -96,7 +96,7 @@ Unlike standard MCP servers, this one provides a visual interface for humans. Wh
 
 ## 💻 HTTP / Dual Transport
 
-This server now runs in **dual transport mode**, supporting both the standard **STDIO** communication (used by most MCP clients) and a new **HTTP JSON-RPC** endpoint on port `6274`.
+This server runs in **dual transport mode**, supporting both the standard **STDIO** communication (used by most MCP clients) and an **HTTP JSON-RPC** endpoint on port `6274`.
 
 This allows external systems, web applications, and direct `curl` commands to access the server's tools with **live request logging** in your terminal (`[HTTP-RPC]` logs).
 
@@ -106,9 +106,6 @@ This allows external systems, web applications, and direct `curl` commands to ac
 | `/mcp` | `POST` | The main JSON-RPC 2.0 endpoint for tool execution. |
 | `/health` | `GET` | Simple health check, returns `{ status: 'ok' }`. |
 
-### Automatic Port Selection
-The server defaults to port `6274`. If you encounter an `EADDRINUSE` error, the server will automatically find the next available port. **Check the server logs for the final bound port** (e.g., `[HTTP] Started server on http://localhost:6275`).
-
 ### Resolving Port Conflicts (EADDRINUSE) and Automatic Port Selection
 
 The server defaults to port `6274`. If you encounter an `EADDRINUSE: address already in use :::6274` error (common in local development due to stale processes), the server will automatically find the next available port (up to 10 attempts, not spawning multiple servers).
@@ -116,6 +113,10 @@ The server defaults to port `6274`. If you encounter an `EADDRINUSE: address alr
 This ensures the server starts successfully even when the default is blocked. **Always check the server logs for the final bound port** (e.g., `[HTTP] Started server on http://localhost:6275`) if your `curl` or client tool fails on the default `6274`.
 
 To **force a specific port** (e.g., for guaranteed external firewall settings), you can still explicitly set the `MCP_PORT` environment variable:
+
+```bash
+MCP_PORT=8080 npx @letoribo/mcp-graphql-enhanced
+```
 
 ### Testing the HTTP Endpoint
 You can test the endpoint using `curl` as long as the server is running (e.g., via `npm run dev`):
@@ -238,7 +239,7 @@ curl -X POST http://localhost:6274/mcp \
 ```
  (using port 6275 if 6274 was busy)
 ```
-curl -X POST http://localhost:6275/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"query-graphql","params":{"query":"query { __typename }"},"id":1}'
+curl -X POST http://localhost:6275/mcp -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"query-graphql","arguments":{"query":"query { __typename }"}},"id":1}'
 ```
 
 #### 🔍 Use the official MCP Inspector to test your server live:
@@ -247,7 +248,7 @@ npx @modelcontextprotocol/inspector \
   -e ENDPOINT=https://api.example.com/graphql \
   npx @letoribo/mcp-graphql-enhanced
 ```
-### Environment Variables (Breaking change in 1.0.0)
+### Environment Variables
 > **Note:** As of version 1.0.0, command line arguments have been replaced with environment variables.
 
 | Environment Variable | Description | Default |
@@ -260,7 +261,7 @@ npx @modelcontextprotocol/inspector \
 | `MCP_PORT` | Port for the HTTP/JSON-RPC server. | `6274` |
 | `ENABLE_HTTP` | Enable HTTP transport: `auto` (default), `true`, or `false` | `auto` |
 **Note on `ENABLE_HTTP`:** 
-- `auto` (default): Automatically enables HTTP only when running in MCP Inspector...
+- `auto` (default): Automatically enables HTTP only when running in MCP Inspector.
 - `true`: Always enable HTTP server
 - `false`: Disable HTTP server completely
 ### 🚀 Examples
@@ -467,7 +468,7 @@ The server provides two main tools:
     - `headers` *(optional, string)*: JSON stringified object of custom HTTP headers (e.g., `'{"Authorization": "Bearer token"}'`).
   - **Note:** Filtered introspection is only available when querying a live GraphQL endpoint.
 2. **query-graphql**: Execute GraphQL queries against the endpoint. By default, mutations are disabled unless `ALLOW_MUTATIONS` is set to `true`.
-- ***Arguments:***
+  - ***Arguments:***
     - `query` *(required, string)*: The GraphQL query or mutation string.
     - `variables` *(optional, string)*: JSON stringified object of variables.
     - `endpoint` *(optional, string)*: Target GraphQL HTTP/HTTPS URL to dynamically switch endpoint on the fly before executing query.
