@@ -1,6 +1,4 @@
 import {
-  buildClientSchema,
-  getIntrospectionQuery,
   GraphQLSchema,
   isObjectType,
   isInterfaceType,
@@ -8,34 +6,8 @@ import {
   isEnumType,
   isUnionType,
   isScalarType,
-  printSchema,
 } from "graphql";
 import { readFile } from "node:fs/promises";
-
-/**
- * Introspect a GraphQL endpoint and return the schema as the GraphQL SDL
- */
-export async function introspectEndpoint(
-  endpoint: string,
-  headers?: Record<string, string>,
-  typeDepth: number = 2
-) {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify({
-      query: getIntrospectionQuery(getSafeIntrospectionOptions(typeDepth)),
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`GraphQL request failed: ${response.statusText}`);
-  }
-
-  const responseJson = await response.json();
-  const schema = buildClientSchema((responseJson as any).data);
-  return printSchema(schema);
-}
 
 /**
  * Introspect a local GraphQL schema file
