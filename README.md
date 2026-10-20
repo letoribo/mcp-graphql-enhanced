@@ -322,35 +322,6 @@ npx @letoribo/mcpgql@latest
 - **Zero-config start**: Automatic discovery and template initialization.
 - **Interactive selection**: Toggle multiple endpoints and permissions on the fly.
 - **Bridge mode**: Automatically handles the Federated Bridge setup on localhost:6274.  
-#### 6. Integration via Smithery CLI
-Smithery provides a powerful way to manage your MCP servers, handle authentication, and interact with tools directly from your terminal
-```
-# 1. Install Smithery CLI
-npm install -g smithery
-
-# 2. Create a namespace
-smithery namespace create {your-namespace}
-
-# 3. Add the server
-smithery mcp add letoribo/mcp-graphql-enhanced
-
-# 4. Interact with tools
-smithery tool list {connection}
-smithery tool call {connection} {tool_name} '{"key": "value"}'
-
-E.g.
-smithery tool call letoribo-mcp-graphql-enhanced introspect-schema
-smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["Guild", "Message", "User"]}'
-smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"typeNames": ["McpServer"], "typeDepth": 2}'
-smithery tool call letoribo-mcp-graphql-enhanced introspect-schema '{"endpoint": "https://mcp-discord.vercel.app/api/graphiql"}'
-smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ countMcpServers }"}'
-smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ countMcpServers(q: \"graphql\") }"}'
-smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ proxyInfo { host source timestamp } }"}'
-smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ guildChannels(guild_id: \"1312302100125843476\") { name id topic } }"}'
-smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ searchMcpServers(q: \"mcp-remote\", limit: 50) { id name namespace description environmentVariablesJsonSchema { properties required } } }"}'
-smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"query": "{ getMcpServer(id: \"a17sht5lzn\") { name namespace description environmentVariablesJsonSchema { properties required } repository { url } slug spdxLicense { name url } tools { description inputSchema name } url attributes id }}"}'
-smithery tool call letoribo-mcp-graphql-enhanced query-graphql '{"endpoint": "https://mcp-neo4j-discord.vercel.app/api/graphiql", "query": "{ getGuilds { name } }"}'
-```
 ### ☁️ Deploy to Cloud
 This server is fully containerized and optimized for long-running processes.
 ### Recommended Hosting
