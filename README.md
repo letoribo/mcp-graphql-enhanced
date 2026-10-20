@@ -456,3 +456,9 @@ With the optional headers argument added directly to query-graphql and introspec
 Mutations are disabled by default to prevent unintended data changes. Always validate HEADERS and SCHEMA inputs in production. Use HTTPS endpoints and short-lived tokens where possible.
 ## Customize for your own server
 This is a very generic implementation where it allows for complete introspection and for your users to do whatever (including mutations). If you need a more specific implementation I'd suggest to just create your own MCP and lock down tool calling for clients to only input specific query fields and/or variables. You can use this as a reference.
+
+---
+
+> **Note on Contributors**
+>
+> Claude Code was **not** used in this project. If you're curious how Claude ended up as a co-author via custom MCP architecture, feel free to ask!
