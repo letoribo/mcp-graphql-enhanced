@@ -642,6 +642,29 @@ export const introspectHandler = async (args: {
         cleanTypeNames = typeNames;
     }
 
+    // 🛡️ Input validation (Security & Quality Limits)
+    if (cleanTypeNames && cleanTypeNames.length > 20) {
+        return {
+            content: [{
+                type: "text" as const,
+                text: `❌ Validation Error: 'typeNames' cannot exceed 20 items per request (received ${cleanTypeNames.length} types).`
+            }],
+            isError: true
+        };
+    }
+
+    if (typeDepth !== undefined) {
+        if (typeof typeDepth !== 'number' || isNaN(typeDepth) || typeDepth < 0 || typeDepth > 5) {
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: `❌ Validation Error: 'typeDepth' must be a number between 0 and 5 (received ${typeDepth}).`
+                }],
+                isError: true
+            };
+        }
+    }
+
     const hasTypeNames = cleanTypeNames !== undefined && cleanTypeNames.length > 0;
     const hasTypeDepth = typeDepth !== undefined;
 
@@ -747,11 +770,11 @@ registerTool(
     "Use this to navigate the federated graph topology before executing queries.",
     {
         typeNames: z.array(z.string()).optional().describe(
-            "List of specific GraphQL type names to introspect. " +
+            "List of specific GraphQL type names to introspect (max 20 types per request). " +
             "If provided, returns the detailed SDL definitions for these types. " +
             "If omitted, returns a system-wide Federated Manifest overview."
         ),
-        typeDepth: z.number().optional().describe("Depth of nested fields to retrieve (default: 2)"),
+        typeDepth: z.number().optional().describe("Depth of nested fields to retrieve (0 to 5, default: 2)"),
         endpoint: z.string().optional().describe("Optional target GraphQL HTTP/HTTPS URL to dynamically switch endpoint before execution."),
         headers: z.string().optional().describe("JSON stringified object of extra HTTP headers for the introspection request (e.g. '{\"Authorization\": \"Bearer token\"}').")
     }, 
@@ -813,7 +836,11 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
             case '/':
             case '/graphql':    
             case '/graphiql':
-                res.writeHead(200, { 'Content-Type': 'text/html' });
+                res.writeHead(200, {
+                    'Content-Type': 'text/html',
+                    'X-Content-Type-Options': 'nosniff',
+                    'X-XSS-Protection': '1; mode=block'
+                });
                 const host = req.headers.host || ''; 
                 const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
                 const endpoint = isLocal 
