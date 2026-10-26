@@ -608,7 +608,7 @@ registerTool(
  * Provides a global view of all nodes and resolves type conflicts.
  */
 export const introspectHandler = async (args: { 
-    typeNames?: string[], 
+    typeNames?: string | string[], // <--- Allow both string and string[]
     typeDepth?: number, 
     endpoint?: string,
     headers?: string 
@@ -636,7 +636,10 @@ export const introspectHandler = async (args: {
             const parsed = JSON.parse(typeNames);
             cleanTypeNames = Array.isArray(parsed) ? parsed : [parsed];
         } catch {
-            cleanTypeNames = [typeNames];
+            // Fallback: Normalize comma-separated string inputs into a clean array for batch type resolution
+            cleanTypeNames = typeNames.includes(',') 
+                ? typeNames.split(',').map(s => s.trim()).filter(Boolean) 
+                : [typeNames];
         }
     } else if (Array.isArray(typeNames)) {
         cleanTypeNames = typeNames;
