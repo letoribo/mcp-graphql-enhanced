@@ -425,8 +425,18 @@ export const queryGraphqlHandler = async ({
         const activeEndpointString = endpoint && endpoint.trim().length > 0 ? endpoint : env.ENDPOINT;
         const allEndpoints = activeEndpointString.split(',').map(url => url.trim());
 
+        // 🛡️ Check if the query is an introspection request (__schema)
+        const isIntrospectionQuery = parsedQuery.definitions.some((def: any) => 
+            def.kind === "OperationDefinition" && 
+            def.selectionSet?.selections?.some((sel: any) => sel.name?.value?.startsWith('__'))
+        );
+
         let endpoints = allEndpoints;
-        if (allEndpoints.length > 1) {
+        
+        if (isIntrospectionQuery) {
+            // For introspection, strictly use the first endpoint to avoid breaking the type structure during merging
+            endpoints = [allEndpoints[0]];
+        } else if (allEndpoints.length > 1) {
             endpoints = allEndpoints.filter(url => {
                 const nodeMeta = manifest.find((m: any) => m.endpoint === url);
                 if (!nodeMeta) return true;
@@ -532,20 +542,28 @@ export const queryGraphqlHandler = async ({
 
         if (successes.length === 0) throw new Error("Execution failed on all available nodes.");
 
-        const allErrors = successes.flatMap(s => s.data.errors || []);
-        if (allErrors.length > 0) {
+        const validNodes = successes.filter(s => s.data?.data && (!s.data?.errors || s.data.errors.length === 0));
+
+        const allErrors = successes.flatMap(s => {
+            const errs = s.data?.errors;
+            return Array.isArray(errs) ? errs : [];
+        });
+
+        const finalErrors = allErrors.length > 0 ? allErrors : [{ message: "Node returned null or empty response" }];
+
+        if (validNodes.length === 0) {
             return { 
                 content: [{ 
                     type: "text" as const, 
-                    text: `❌ GraphQL Validation/Execution Error:\n${JSON.stringify(allErrors, null, 2)}` 
+                    text: `❌ GraphQL Validation/Execution Error:\n${JSON.stringify(finalErrors, null, 2)}` 
                 }], 
                 isError: true 
             };
         }
 
         const mergedData: any = {};
-        successes.forEach((resp) => {
-            const nodeData = resp.data.data;
+        validNodes.forEach((resp) => {
+            const nodeData = resp.data?.data;
             if (!nodeData) return;
 
             Object.keys(nodeData).forEach(key => {
@@ -562,7 +580,7 @@ export const queryGraphqlHandler = async ({
             });
         });
 
-        const cypherLogs = successes.flatMap(r => r.data.extensions?.cypher || []);
+        const cypherLogs = successes.flatMap(r => r.data?.extensions?.cypher || []);
         const cleanCypher = cypherLogs.map((c: string) => 
             c.replace(/^CYPHER: /, '').replace(/^CYPHER 5\n/, '').replace(/\nPARAMS: \{\}$/, '')
         );
