@@ -589,7 +589,7 @@ export const queryGraphqlHandler = async ({
             content: [{
                 type: "text" as const,
                 text: JSON.stringify({
-                    meta: { nodes_queried: endpoints.length, nodes_responding: successes.length },
+                    meta: { nodes_queried: endpoints.length, nodes_responding: validNodes.length },
                     data: mergedData,
                     ...(cleanCypher.length > 0 ? { cypher_execution_plan: cleanCypher } : {})
                 }, null, 2)
