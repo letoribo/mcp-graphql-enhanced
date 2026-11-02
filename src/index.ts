@@ -7,6 +7,7 @@ import { parse } from "graphql/language";
 import z from "zod";
 import { renderGraphiQL} from "./helpers/graphiql.js";
 import type { GraphQLSchema } from "graphql";
+import { print } from "graphql";
 
 // Helper imports
 import { checkDeprecatedArguments } from "./helpers/deprecation.js";
@@ -17,7 +18,7 @@ import {
 } from "./helpers/introspection.js";
 import { registerTool } from "./helpers/tool-registry.js";
 import { registerPrompt } from "./helpers/prompt-registry.js";
-import { isQueryRelevantToNode } from "./helpers/routing.js";
+import { isQueryRelevantToNode, pruneASTForSchema } from "./helpers/routing.js";
 import { isDocker } from "./helpers/container.js";
 import path from "path";
 
@@ -454,6 +455,15 @@ export const queryGraphqlHandler = async ({
                 let result: any = null;
                 let lastError: any = null;
 
+                // 🛡️ Find the schema specifically for this endpoint and prune AST to match its capabilities
+                // Debug: check which schema was found for which URL
+                const nodeSchema = (cachedSchemas as any[]).find(s => s._originUrl === url) || cachedSchemaObject;
+                // console.log(`[Router] URL: ${url}, Schema found:`, !!nodeSchema, nodeSchema === cachedSchemaObject ? "(FALLBACK TO DEFAULT)" : "(NODE-SPECIFIC)");
+
+                const prunedAST = pruneASTForSchema(parsedQuery, nodeSchema);
+                // console.log(`[Router] Original vs Pruned length for ${url}:`, print(parsedQuery).length, "->", print(prunedAST).length);
+                const nodeSpecificQuery = print(prunedAST);
+
                 // 🛡️ GUARANTEED Apollo CSRF & JSON headers
                 const cleanHeaders: Record<string, string> = {
                     "content-type": "application/json",
@@ -481,7 +491,7 @@ export const queryGraphqlHandler = async ({
                             method: "POST",
                             headers: cleanHeaders,
                             body: JSON.stringify({ 
-                                query, 
+                                query: nodeSpecificQuery, 
                                 ...(payloadVariables ? { variables: payloadVariables } : {})
                             }),
                             signal: AbortSignal.timeout(15000)
@@ -489,7 +499,7 @@ export const queryGraphqlHandler = async ({
 
                         // GET Fallback on HTTP 400
                         if (!response.ok && response.status === 400) {
-                            const minifiedQuery = query.replace(/\s+/g, ' ').trim();
+                            const minifiedQuery = nodeSpecificQuery.replace(/\s+/g, ' ').trim();
                             let getUrl = `${url}?query=${encodeURIComponent(minifiedQuery)}`;
                             
                             if (fetchVariables) {
@@ -542,7 +552,20 @@ export const queryGraphqlHandler = async ({
 
         if (successes.length === 0) throw new Error("Execution failed on all available nodes.");
 
-        const validNodes = successes.filter(s => s.data?.data && (!s.data?.errors || s.data.errors.length === 0));
+        // Accept the node if it has a data field (even if there are field validation schema errors)
+        const validNodes = successes.filter(s => {
+            if (!s.data?.data) return false;
+            const errors = s.data?.errors;
+            if (!errors || errors.length === 0) return true;
+            
+            // Check: if all errors are solely related to undefined fields (Field "..." is not defined),
+            // still capture the partial data that the node was able to return!
+            const isOnlyFieldErrors = errors.every((err: any) => 
+                err.message && err.message.includes("is not defined")
+            );
+            
+            return isOnlyFieldErrors;
+        });
 
         const allErrors = successes.flatMap(s => {
             const errs = s.data?.errors;
