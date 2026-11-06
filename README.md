@@ -49,13 +49,26 @@ Simply pass the optional `endpoint` parameter in `query-graphql` or `introspect-
 * **Context Preservation**: Keeps the MCP connection open while shifting queries between different environments (e.g., switching from a Discord ingest node to a Neo4j graph database).
 
 ## 🚀 Federated Multi-Node Architecture (since v3.9.1)
-The server operates as a Federated GraphQL Gateway, merging independent nodes into a unified system.
 
-*   **Zero Breaking Changes**: If you provide a single URL in `ENDPOINT`, the server behaves exactly as before.
-*   **Federated Introspection**: Scans all endpoints simultaneously to build a global capability map.
-*   **Smart Aggregation**: When multiple comma-separated URLs are provided, the server broadcasts queries and merges results using universal deep deduplication (object-level).
-*   **Conflict Handling**: Identifies structural differences in identical Type names across nodes and exposes them uniquely.
-*   **Bypass Free Tier Limits**: Perfect for users of "Free Tier" cloud databases (like Neo4j Aura). You can split your data across multiple free instances and use this bridge to query them as a **single unified graph**, effectively bypassing entity count limitations.
+The server operates as a Federated GraphQL Gateway capable of querying multiple independent GraphQL environments through a single endpoint.
+
+* **Zero Breaking Changes**: If you provide a single URL in `ENDPOINT`, the server behaves exactly as before.
+
+* **Federated Capability Discovery**: During startup, all configured endpoints are introspected to build a federated manifest used for routing, relevance analysis, and node selection.
+
+* **Stable Runtime Introspection**: Direct GraphQL introspection queries (`__schema`, `__type`) are always resolved against the first configured endpoint. This preserves a consistent schema model and avoids corruption caused by merging independent introspection trees.
+
+* **Selective Node Routing**: The federated manifest is consulted before execution to determine whether a query is relevant to a node, reducing unnecessary requests and improving performance.
+
+* **Schema-Adaptive Broadcasts**: Queries are automatically pruned against each participating schema before execution. Unsupported fields and empty selection branches are removed on a per-node basis, allowing a single query to operate across heterogeneous GraphQL environments.
+
+* **Smart Aggregation**: When multiple comma-separated URLs are provided, the server broadcasts queries, aggregates responses, and performs universal deep object-level deduplication.
+
+* **Conflict Handling**: Structural differences between identically named types across nodes are detected and exposed safely.
+
+* **Unified Graph Experience**: Independent GraphQL systems can be queried through a single endpoint, including combinations such as GitHub GraphQL, Neo4j GraphQL, and custom GraphQL APIs.
+
+* **Bypass Free Tier Limits**: Useful for Free Tier cloud databases (for example Neo4j Aura). Data can be distributed across multiple instances while remaining queryable through a single federated gateway.
 
 #### Proof of Concept:
 See a real-world demonstration of the federated query synthesis in action, where the agent aggregates live Discord data with historical Neo4j insights:

@@ -56,5 +56,5 @@
 	"overrides": {
 		"esbuild": "^0.28.2"
 	},
-	"version": "4.15.8"
+	"version": "4.16.0"
 }
