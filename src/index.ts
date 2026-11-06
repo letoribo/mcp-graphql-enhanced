@@ -578,7 +578,12 @@ export const queryGraphqlHandler = async ({
             return { 
                 content: [{ 
                     type: "text" as const, 
-                    text: `❌ GraphQL Validation/Execution Error:\n${JSON.stringify(finalErrors, null, 2)}` 
+                    text: [
+                        `❌ GraphQL Validation/Execution Error`,
+                        `💡 Tip: The requested field or type is missing from the active schema. Use the 'introspect-schema' tool to verify available schema fields.`,
+                        `📋 Technical Details:`,
+                        JSON.stringify(finalErrors, null, 2)
+                    ].join('\n\n') 
                 }], 
                 isError: true 
             };
@@ -838,7 +843,7 @@ function sendJsonResponse(res: ServerResponse, data: any, statusCode: number = 2
     }
 
     res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(responseBody));
+    res.end(JSON.stringify(responseBody)+ '\n');
 }
 
 const readBody = (req: IncomingMessage): Promise<string> => 
