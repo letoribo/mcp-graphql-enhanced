@@ -7,7 +7,8 @@ import { parse } from "graphql/language";
 import z from "zod";
 import { renderGraphiQL} from "./helpers/graphiql.js";
 import type { GraphQLSchema } from "graphql";
-import { print } from "graphql";
+import { graphql, print } from "graphql";
+import { safeDefaultSchema, safeDefaultRoot } from './safe-defaults';
 
 // Helper imports
 import { checkDeprecatedArguments } from "./helpers/deprecation.js";
@@ -47,8 +48,8 @@ const EnvSchema = z.object({
             if (typeof val === 'string' && val.trim().length > 0) return val.trim();
             return undefined;
         },
-        z.string().url("ENDPOINT must be a valid URL")
-    ).default("https://mcp-discord.vercel.app/api/graphiql"),
+        z.string().url("ENDPOINT must be a valid URL").optional()
+    ).default(""),
     ALLOW_MUTATIONS: z
         .enum(["true", "false"])
         .transform((value: string) => value === "true")
@@ -196,6 +197,14 @@ async function performUpdate(
                 endpoint: "Local SDL File",
                 availableMutations: ["*"],
                 domainEntities: Object.keys(localSchema.getTypeMap()).filter(t => !t.startsWith('__'))
+            });
+        } else if (!env.ENDPOINT) {
+            // 🛡️ Safe Defaults Fallback Mode
+            tempSchemas = [Object.assign(safeDefaultSchema, { _originUrl: "safe-defaults" })];
+            manifest.push({
+                endpoint: "Safe Defaults (Offline Mode)",
+                availableMutations: [],
+                domainEntities: Object.keys(safeDefaultSchema.getTypeMap()).filter(t => !t.startsWith('__'))
             });
         } else {
             const endpoints = env.ENDPOINT.split(',').map(url => url.trim());
@@ -424,6 +433,28 @@ export const queryGraphqlHandler = async ({
 
         const manifest = (global as any).nodeManifest || [];
         const activeEndpointString = endpoint && endpoint.trim().length > 0 ? endpoint : env.ENDPOINT;
+        
+        // 🛡️ Executing on built-in safe-defaults schema when no endpoint is provided
+        if (!activeEndpointString && !env.SCHEMA) {
+            const result = await graphql({
+                schema: safeDefaultSchema,
+                source: query,
+                rootValue: safeDefaultRoot,
+                variableValues: fetchVariables
+            });
+
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: JSON.stringify({
+                        meta: { mode: "safe-defaults", source: "offline-tips" },
+                        data: result.data,
+                        ...(result.errors ? { errors: result.errors } : {})
+                    }, null, 2)
+                }]
+            };
+        }
+
         const allEndpoints = activeEndpointString.split(',').map(url => url.trim());
 
         // 🛡️ Check if the query is an introspection request (__schema)

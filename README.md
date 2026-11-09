@@ -266,7 +266,7 @@ npx @modelcontextprotocol/inspector \
 
 | Environment Variable | Description | Default |
 | :--- | :--- | :--- |
-| `ENDPOINT` | GraphQL endpoint(s). Supports comma-separated list for Multi-Node Architecture. | `https://mcp-discord.vercel.app/api/graphiql` |
+| `ENDPOINT` | GraphQL endpoint(s). Supports comma-separated list. | `""` *(Safe offline fallback mode with built-in Tips & Tricks)* |
 | `HEADERS` | JSON string containing headers for requests | `{}` |
 | `ALLOW_MUTATIONS` | Enable mutation operations (disabled by default) | `false` |
 | `NAME` | Name of the MCP server | `mcp-graphql-enhanced` |
@@ -279,8 +279,13 @@ npx @modelcontextprotocol/inspector \
 - `false`: Disable HTTP server completely
 ### 🚀 Examples
 #### 1. Quick Start
-Basic startup using the default endpoint.
+Basic startup in secure offline mode (launches with built-in Tips & Tricks and no external network traffic):
 ```bash
+npx @letoribo/mcp-graphql-enhanced
+```
+To connect your custom backend, pass the `ENDPOINT` variable:
+```
+ENDPOINT=https://api.example.com/graphql \
 npx @letoribo/mcp-graphql-enhanced
 ```
 #### 2. Configuration & Authentication
@@ -465,8 +470,18 @@ With the optional headers argument added directly to query-graphql and introspec
 * Keep Secrets in Your Terminal: You don't have to feed your private tokens (like GitHub PATs or Bearer keys) directly into Claude's prompt or static setup. Just set "ENABLE_HTTP": "true", run your cURL commands or local scripts directly in the terminal, and pass headers there. Any headers passed at runtime will override static tokens from your config file. Otherwise, Claude might just laugh at you for sharing your raw secret tokens in the chat!
 * On-the-Fly Switching: You can dynamically inject different auth headers per request or per endpoint right at execution time without restarting the MCP server.
 
-## Security Considerations
-Mutations are disabled by default to prevent unintended data changes. Always validate HEADERS and SCHEMA inputs in production. Use HTTPS endpoints and short-lived tokens where possible.
+## 🔒 Security & Privacy Notice
+
+> **No Implicit External Traffic:**
+> We removed the hardcoded default endpoint (previously pointing to our official demo graph endpoint, which automated security scanners flagged as an unchosen third-party host). 
+> 
+> If no `ENDPOINT` environment variable is explicitly provided, the bridge no longer initiates any network requests. Instead, it securely boots into an **offline local fallback mode** powered by an embedded schema with built-in documentation and Tips & Tricks. Zero data leaks, zero scanner warnings.
+
+### Core Security Guidelines:
+* **Mutations Disabled by Default:** Operations that modify persistent state are blocked out-of-the-box unless `ALLOW_MUTATIONS=true` is explicitly set.
+* **Input Validation:** Always validate `HEADERS` and `SCHEMA` inputs in production environments.
+* **Transport Credentials:** Use HTTPS endpoints and short-lived authorization tokens where possible.
+
 ## Customize for your own server
 This is a very generic implementation where it allows for complete introspection and for your users to do whatever (including mutations). If you need a more specific implementation I'd suggest to just create your own MCP and lock down tool calling for clients to only input specific query fields and/or variables. You can use this as a reference.
 
