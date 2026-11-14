@@ -435,24 +435,49 @@ export const queryGraphqlHandler = async ({
         const activeEndpointString = endpoint && endpoint.trim().length > 0 ? endpoint : env.ENDPOINT;
         
         // 🛡️ Executing on built-in safe-defaults schema when no endpoint is provided
-        if (!activeEndpointString && !env.SCHEMA) {
-            const result = await graphql({
-                schema: safeDefaultSchema,
-                source: query,
-                rootValue: safeDefaultRoot,
-                variableValues: fetchVariables
-            });
+        if (!activeEndpointString) {
+            if (env.SCHEMA) {
+                // Scenario 1: No endpoint provided, but local SCHEMA exists
+                const localSchema = cachedSchemaObject || (cachedSchemas.length > 0 ? cachedSchemas[0] : null);
+                if (!localSchema) {
+                    throw new Error("Local schema not initialized yet.");
+                }
+                const result = await graphql({
+                    schema: localSchema,
+                    source: query,
+                    variableValues: fetchVariables
+                });
 
-            return {
-                content: [{
-                    type: "text" as const,
-                    text: JSON.stringify({
-                        meta: { mode: "safe-defaults", source: "offline-tips" },
-                        data: result.data,
-                        ...(result.errors ? { errors: result.errors } : {})
-                    }, null, 2)
-                }]
-            };
+                return {
+                    content: [{
+                        type: "text" as const,
+                        text: JSON.stringify({
+                            meta: { mode: "local-sdl", source: env.SCHEMA },
+                            data: result.data,
+                            ...(result.errors ? { errors: result.errors } : {})
+                        }, null, 2)
+                    }]
+                };
+            } else {
+                // Scenario 2: Neither endpoint nor schema provided — fall back to safe-defaults
+                const result = await graphql({
+                    schema: safeDefaultSchema,
+                    source: query,
+                    rootValue: safeDefaultRoot,
+                    variableValues: fetchVariables
+                });
+
+                return {
+                    content: [{
+                        type: "text" as const,
+                        text: JSON.stringify({
+                            meta: { mode: "safe-defaults", source: "offline-tips" },
+                            data: result.data,
+                            ...(result.errors ? { errors: result.errors } : {})
+                        }, null, 2)
+                    }]
+                };
+            }
         }
 
         const allEndpoints = activeEndpointString.split(',').map(url => url.trim());

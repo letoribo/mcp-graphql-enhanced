@@ -296,12 +296,14 @@ HEADERS='{"Authorization":"Bearer xyz"}' \
 npx @letoribo/mcp-graphql-enhanced
 ```
 #### 3. Advanced Integration
-Using a local .graphql file If you want to work with a local schema without querying the API directly.
+Using a local `.graphql` file (Offline Mode)
+If you want to introspect and validate queries against a local SDL file without connecting to a live GraphQL endpoint:
 ```
-ENDPOINT=http://localhost:3000/graphql \
 SCHEMA=./schema.graphql \
 npx @letoribo/mcp-graphql-enhanced
 ```
+> **Note:** ENDPOINT takes priority over SCHEMA. If ENDPOINT is provided, the bridge will connect to the remote API and ignore the local SCHEMA file.
+
 Enabling Mutations (Writes) Mutations are disabled by default for security. To enable them:
 ```
 ENDPOINT=http://localhost:3000/graphql \
