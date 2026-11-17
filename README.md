@@ -296,13 +296,41 @@ HEADERS='{"Authorization":"Bearer xyz"}' \
 npx @letoribo/mcp-graphql-enhanced
 ```
 #### 3. Advanced Integration
-Using a local `.graphql` file (Offline Mode)
-If you want to introspect and validate queries against a local SDL file without connecting to a live GraphQL endpoint:
+**Decoupled Schema Execution (Local or Remote SDL)**
+
+You can run the bridge decoupled from a live GraphQL execution engine by pointing `SCHEMA` to either a local `.graphql` file or a remote raw SDL URL (`http://` or `https://`). 
+
+This mode is particularly useful for:
+- **Offline Query Building & AST Validation:** Allow agents to introspect types and validate complex GraphQL queries against a schema contract before a backend is deployed or accessible.
+- **Synthetic Data Generation:** Enable agents to inspect domain entities and generate realistic, schema-compliant mock payloads and test fixtures without touching production endpoints.
+
+👉 **See it in action:** Check out this [shared Claude session](https://claude.ai/share/fddccc2a-3682-46ae-b274-227e1e480211) demonstrating how an agent inspects a local SDL schema, designs a service-dependency graph, and executes clean multi-step mutations.
+
+**Using a local `.graphql` file:**
 ```
 SCHEMA=./schema.graphql \
 npx @letoribo/mcp-graphql-enhanced
 ```
-> **Note:** ENDPOINT takes priority over SCHEMA. If ENDPOINT is provided, the bridge will connect to the remote API and ignore the local SCHEMA file.
+**Fetching a remote public SDL (via raw URL):**
+```
+SCHEMA=https://raw.githubusercontent.com/graphql/swapi-graphql/master/schema.graphql \
+npx @letoribo/mcp-graphql-enhanced
+```
+**Fetching a remote private SDL (via HEADERS or Query Token):**
+
+Option A: Using HTTP headers
+```
+SCHEMA=https://raw.githubusercontent.com/letoribo/private-repo/refs/heads/master/api/schema.graphql \
+HEADERS='{"Authorization": "Bearer ghp_your_token"}' \
+npx @letoribo/mcp-graphql-enhanced
+```
+Option B: Using a query parameter token
+```
+SCHEMA=https://raw.githubusercontent.com/letoribo/private-repo/refs/heads/master/api/schema.graphql?token=GHSAT0AAAAAAEBD6K7HA3MCVCS2Q7QPAVFI2X4S7UA \
+npx @letoribo/mcp-graphql-enhanced
+```
+
+> **Note:** ENDPOINT takes priority over SCHEMA. If ENDPOINT is provided, the bridge will connect to the live API(s) and ignore the standalone SCHEMA source.
 
 Enabling Mutations (Writes) Mutations are disabled by default for security. To enable them:
 ```

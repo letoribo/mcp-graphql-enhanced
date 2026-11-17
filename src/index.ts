@@ -64,7 +64,7 @@ const EnvSchema = z.object({
                 throw new Error("HEADERS must be a valid JSON string");
             }
         }),
-    SCHEMA: z.string().optional(),
+    SCHEMA: z.string().trim().optional(),
     MCP_PORT: z.preprocess(
         (val: unknown) => {
             // Railway/Render dynamically assign the port via the PORT env var.
@@ -86,6 +86,8 @@ const EnvSchema = z.object({
 });
 
 const env = EnvSchema.parse(process.env);
+const isRemoteSdl = Boolean(env.SCHEMA?.trim().startsWith("http"));
+const sdlMode = isRemoteSdl ? "remote-sdl" : "local-sdl";
 
 /**
  * Build dynamic auth headers for nodes that require credentials
@@ -179,22 +181,25 @@ async function performUpdate(
             ...customHeaders
         };
 
-        // --- FETCHING LOGIC: LOCAL SDL OR REMOTE BROADCAST ---
+        // --- FETCHING LOGIC: LOCAL/REMOTE SDL OR BROADCAST ---
         if (env.SCHEMA) {
             let sdl: string;
-            if (env.SCHEMA.startsWith("http")) {
-                const response = await fetch(env.SCHEMA);
-                if (!response.ok) throw new Error(`Remote_SDL_Fetch_Failed: ${response.statusText}`);
+            if (isRemoteSdl) {
+                const response = await fetch(env.SCHEMA.trim(), {
+                    headers: activeHeaders,
+                    signal: AbortSignal.timeout(15000)
+                });
+                if (!response.ok) throw new Error(`Remote_SDL_Fetch_Failed: ${response.status} ${response.statusText}`);
                 sdl = await response.text();
             } else {
-                sdl = await introspectLocalSchema(env.SCHEMA);
+                sdl = await introspectLocalSchema(env.SCHEMA.trim());
             }
             const localSchema = buildASTSchema(gqlParse(sdl));
-            localSchema._originUrl = "local-sdl";
+            localSchema._originUrl = sdlMode;
             tempSchemas = [localSchema];
             
             manifest.push({
-                endpoint: "Local SDL File",
+                endpoint: isRemoteSdl ? `Remote SDL (${env.SCHEMA.trim()})` : "Local SDL File",
                 availableMutations: ["*"],
                 domainEntities: Object.keys(localSchema.getTypeMap()).filter(t => !t.startsWith('__'))
             });
@@ -452,7 +457,7 @@ export const queryGraphqlHandler = async ({
                     content: [{
                         type: "text" as const,
                         text: JSON.stringify({
-                            meta: { mode: "local-sdl", source: env.SCHEMA },
+                            meta: { mode: sdlMode, source: env.SCHEMA },
                             data: result.data,
                             ...(result.errors ? { errors: result.errors } : {})
                         }, null, 2)
@@ -1160,7 +1165,13 @@ async function main() {
         start(env.MCP_PORT);
     }
 
-    console.error(`[BOOT] Initializing schema sync for: ${env.ENDPOINT}`);
+    const bootSource = env.ENDPOINT
+        ? env.ENDPOINT
+        : env.SCHEMA
+            ? `${sdlMode} (${env.SCHEMA})`
+            : "safe-defaults (offline mode)";
+
+    console.error(`[BOOT] Initializing schema sync for: ${bootSource}`);
     getSchema(true).catch(err => console.error(`[BOOT-WARN] Initial sync failed: ${err.message}`));
 }
 
