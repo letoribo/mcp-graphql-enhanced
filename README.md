@@ -9,16 +9,19 @@ An **enhanced MCP (Model Context Protocol) server for GraphQL** that fixes real-
 `mcp-graphql-enhanced` is a high-performance, federated GraphQL gateway designed to act as a workhorse for LLM agents. It bridges the gap between massive, complex GraphQL ecosystems and the context-limited environment of AI assistants. Unlike standard "all-or-nothing" introspection tools that crash under the weight of large schemas (like GitHub's or enterprise-grade Neo4j graphs), this server provides surgical control over how your agent perceives and interacts with your data.
 
 #### 💡 Why do you need it?
-If you have ever seen the`<error>Tool result is too large</error>`while trying to introspect your API, you are already hitting the limits of standard MCP implementations. Here is why mcp-graphql-enhanced is a practical choice for professional environments:
+If you have ever seen the `<error>Tool result is too large</error>` while trying to introspect your API, you are already hitting the limits of standard MCP implementations. Here is why `mcp-graphql-enhanced` is a practical choice for professional environments:
 
-Avoid the 1MB Ceiling: It shifts the responsibility for scope from the server to the caller. Instead of a unilateral "everything or nothing" dump, you get granular control via typeNames and typeDepth parameters.
+* **Avoid the 1MB Ceiling:** It shifts the responsibility for scope from the server to the caller. Instead of a unilateral "everything or nothing" dump, you get granular control via `typeNames` and `typeDepth` parameters.
+* **Surgical Precision:** You can selectively introspect only the nodes you need (e.g., `Repository`, `User`, or `Message`), keeping your context window clean and your LLM focused.
+* **Predictability over Immunity:** It doesn't promise "unlimited" capacity—it promises predictability. In enterprise systems, you need a tool that lets you navigate the graph surgically and fail predictably if you overstep, rather than a "black box" that dies on you the moment the schema grows.
 
-Surgical Precision: You can selectively introspect only the nodes you need (e.g., Repository, User, or Message), keeping your context window clean and your LLM focused.
+> **Demonstration (Scoped Introspection):** See a real-world diagnostic test against the GitHub API that compares scoped and monolithic introspection:
+> 🔗 Diagnostic Case Study: Scoped vs. Monolithic Introspection ([Shared Chat](https://claude.ai/share/5b845f72-809a-42ee-8083-361314126069))
 
-Predictability over Immunity: It doesn't promise "unlimited" capacity—it promises predictability. In enterprise systems, you need a tool that lets you navigate the graph surgically and fail predictably if you overstep, rather than a "black box" that dies on you the moment the schema grows.
+* **Constant Footprint vs. Tool Explosion:** Static REST-wrapped MCP servers face an inherent completeness paradox—exposing dozens of hand-crafted tools consumes tens of thousands of tokens on `tools/list` while still leaving large parts of the underlying API unreachable. With zero API-specific wrapper code, `mcp-graphql-enhanced` exposes **100% of any GraphQL schema** through just two primitives (`introspect-schema` + `query-graphql`) at a fixed ~570-token startup cost, and automatically supports new fields the moment the upstream schema evolves.
 
-Demonstration: See a real-world diagnostic test against the GitHub API that compares scoped and monolithic introspection:
-🔗 Diagnostic Case Study: Scoped vs. Monolithic Introspection ([Shared Chat](https://claude.ai/share/5b845f72-809a-42ee-8083-361314126069))
+> **Demonstration (Full-Graph Coverage & Token Overhead):** Compare a fixed two-tool GraphQL approach against static REST tool catalogs on live GitHub API workloads:
+> 🔗 Context Window & Token Overhead Benchmark ([GitHub Discussion #3891](https://github.com/github/github-mcp-server/discussions/3891))
 
 ## 💬 Community & Support
 
