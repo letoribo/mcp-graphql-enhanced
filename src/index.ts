@@ -88,20 +88,22 @@ const EnvSchema = z.object({
 const env = EnvSchema.parse(process.env);
 const isRemoteSdl = Boolean(env.SCHEMA?.trim().startsWith("http"));
 const sdlMode = isRemoteSdl ? "remote-sdl" : "local-sdl";
+let sessionHeaders: Record<string, string> = {};
 
 /**
  * Build dynamic auth headers for nodes that require credentials
  */
 function getEffectiveHeaders(): Record<string, string> {
-    const rawHeaders = (typeof env.HEADERS === 'object' && env.HEADERS !== null) 
-        ? (env.HEADERS as Record<string, string>) 
+    const rawHeaders = (typeof env.HEADERS === 'object' && env.HEADERS !== null)
+        ? (env.HEADERS as Record<string, string>)
         : {};
 
     return {
         "User-Agent": `MCP-GraphQL-Enhanced/${getVersion()}`,
         "Accept": "application/json",
         "Content-Type": "application/json",
-        ...rawHeaders
+        ...rawHeaders,
+        ...sessionHeaders,
     };
 }
 
@@ -430,10 +432,22 @@ export const queryGraphqlHandler = async ({
         const runtimeHeaders = headers ? JSON.parse(headers) : {};
         const fetchVariables = variables ? (typeof variables === 'string' ? JSON.parse(variables) : variables) : undefined;
 
-        if (endpoint && endpoint.trim().length > 0 && endpoint.trim() !== env.ENDPOINT) {
-            env.ENDPOINT = endpoint.trim();
-            cachedSchemas = [];
-            await getSchema(true);
+        if (endpoint && endpoint.trim().length > 0) {
+            const nextEndpoint = endpoint.trim();
+            if (nextEndpoint !== env.ENDPOINT) {
+                sessionHeaders = {};
+                env.ENDPOINT = nextEndpoint;
+                cachedSchemas = [];
+                cachedSDL = null;
+                await getSchema(true);
+            }
+        }
+
+        if (headers) {
+            const parsedHeaders = JSON.parse(headers);
+            if (parsedHeaders && typeof parsedHeaders === 'object') {
+                sessionHeaders = { ...sessionHeaders, ...parsedHeaders };
+            }
         }
 
         const manifest = (global as any).nodeManifest || [];
@@ -731,8 +745,17 @@ export const introspectHandler = async (args: {
 
     const hasEndpointOverride = args.endpoint && args.endpoint.trim().length > 0;
     if (hasEndpointOverride) {
-        env.ENDPOINT = args.endpoint!.trim();
+        const nextEndpoint = args.endpoint!.trim();
+        if (nextEndpoint !== env.ENDPOINT) {
+            sessionHeaders = {};
+        }
+        env.ENDPOINT = nextEndpoint;
         cachedSchemas = [];
+        cachedSDL = null;
+    }
+
+    if (Object.keys(runtimeHeaders).length > 0) {
+        sessionHeaders = { ...sessionHeaders, ...runtimeHeaders };
     }
     
     let { typeNames, typeDepth } = args;
