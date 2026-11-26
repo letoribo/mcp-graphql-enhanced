@@ -17,8 +17,13 @@ type Seen = { method: string; url: string; headers: http.IncomingHttpHeaders; qu
 type Mock = { server: http.Server; port: number; seen: Seen[] };
 
 const sdl = buildSchema("type Query { whoami: String }");
+// Served when the request carries `x-schema: alt`, so a test can see whose schema ended up cached.
+const altSdl = buildSchema("type Poisoned { x: String } type Query { whoami: String poisoned: Poisoned }");
 
-function startMock(id: string): Promise<Mock> {
+// Optional per-request override: return a bodiless response instead of the GraphQL result.
+type Behave = (s: Seen) => { status: number; headers?: Record<string, string> } | null;
+
+function startMock(id: string, behave?: Behave): Promise<Mock> {
     const seen: Seen[] = [];
     const server = http.createServer((req, res) => {
         let body = "";
@@ -31,8 +36,16 @@ function startMock(id: string): Promise<Mock> {
                     ? JSON.parse(body).query
                     : new URL(req.url!, "http://x").searchParams.get("query") || "";
             } catch { /* ignore */ }
-            seen.push({ method: req.method!, url: req.url!, headers: req.headers, query });
-            const result = await graphql({ schema: sdl, source: query, rootValue: { whoami: id } });
+            const entry = { method: req.method!, url: req.url!, headers: req.headers, query };
+            seen.push(entry);
+            const special = behave?.(entry);
+            if (special) {
+                res.writeHead(special.status, special.headers);
+                res.end();
+                return;
+            }
+            const schema = req.headers["x-schema"] === "alt" ? altSdl : sdl;
+            const result = await graphql({ schema, source: query, rootValue: { whoami: id } });
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(result));
         });
@@ -90,7 +103,15 @@ describe("env.HEADERS scoping and per-call endpoint isolation (real server)", { 
     let urlB: string;
 
     before(async () => {
-        A = await startMock("A");
+        // A (configured) redirects non-introspection requests to B when the URL asks for it,
+        // and returns 400 to POSTs carrying `x-post-fails` (forces the GET fallback).
+        A = await startMock("A", (s) => {
+            if (s.method === "POST" && s.headers["x-post-fails"]) return { status: 400 };
+            if (s.url.includes("redirect-to-b") && !s.query.includes("__schema")) {
+                return { status: 307, headers: { Location: `http://127.0.0.1:${B.port}/graphql` } };
+            }
+            return null;
+        });
         B = await startMock("B");
         urlA = `http://localhost:${A.port}/graphql`;
         urlB = `http://127.0.0.1:${B.port}/graphql`;
@@ -217,5 +238,50 @@ describe("env.HEADERS scoping and per-call endpoint isolation (real server)", { 
         // Lookalike on a different port (B) is not the configured endpoint
         await whoami(port, { endpoint: `http://localhost:${B.port}/graphql`, headers: JSON.stringify({ "X-Call": "lookalike" }) });
         assert.ok(!hasCanary(whoamiHits(B, "lookalike")[0]));
+    });
+
+    test("a redirect from the configured endpoint to another URL is not followed with env.HEADERS", async () => {
+        // Query is ignored by endpoint matching, so this target is "configured" and gets env.HEADERS.
+        const target = `${urlA}?redirect-to-b=1`;
+        const r = await callTool(port, "query-graphql", { query: "query { whoami }", endpoint: target, headers: JSON.stringify({ "X-Call": "redir-q" }) });
+        const atA = whoamiHits(A, "redir-q");
+        assert.ok(atA.length > 0, "configured endpoint should have been called");
+        assert.ok(atA.every(hasCanary), "configured endpoint should still get env.HEADERS");
+        assert.equal(whoamiHits(B, "redir-q").length, 0, "redirect to an unconfigured URL must not be followed");
+        assert.doesNotMatch(r.content?.[0]?.text || "", /"whoami":\s*"B"/);
+        for (const s of B.seen) assert.ok(!hasCanary(s), `env.HEADERS leaked via redirect: ${s.method} ${s.url}`);
+    });
+
+    test("explicit endpoint equal to the configured URL is request-scoped and does not rewrite the cache", async () => {
+        const alt = (tag: string) => JSON.stringify({ "X-Call": tag, "X-Schema": "alt" });
+        const r = await callTool(port, "introspect-schema", { endpoint: urlA, headers: alt("explicit-A") });
+        assert.ok(!r.isError, r.content?.[0]?.text);
+        assert.match(r.content[0].text, /Poisoned/, "the scoped call should see its own schema");
+
+        const q = await callTool(port, "query-graphql", { query: "query { whoami }", endpoint: urlA, headers: alt("explicit-A-q") });
+        assert.ok(!q.isError, q.content?.[0]?.text);
+
+        // A no-override query is pruned against the module cache: `poisoned` survives only if
+        // the explicit-endpoint call above wrote its schema there.
+        await callTool(port, "query-graphql", { query: "query { whoami poisoned { x } }", headers: JSON.stringify({ "X-Call": "after-explicit" }) });
+        const after = whoamiHits(A, "after-explicit");
+        assert.equal(after.length, 1);
+        assert.doesNotMatch(after[0].query, /poisoned/, "explicit-endpoint call wrote its schema into the module cache");
+
+        const def = await callTool(port, "introspect-schema", {});
+        assert.match(def.content[0].text, new RegExp(`NODE: ${urlA}`));
+        assert.doesNotMatch(def.content[0].text, /Poisoned/, "explicit-endpoint call wrote its schema into the module cache");
+    });
+
+    test("GET fallbacks send the same headers as the POST", async () => {
+        const hdrs = JSON.stringify({ "X-Call": "get-fb", "X-Post-Fails": "1" });
+        const r = await callTool(port, "introspect-schema", { endpoint: urlA, headers: hdrs });
+        assert.ok(!r.isError, r.content?.[0]?.text);
+        assert.equal(await whoami(port, { endpoint: urlA, headers: hdrs }), "A");
+
+        const gets = A.seen.filter((s) => s.method === "GET" && s.headers["x-call"] === "get-fb");
+        assert.ok(gets.some((s) => s.query.includes("__schema")), "introspection GET fallback should carry per-call headers");
+        assert.ok(gets.some((s) => s.query.includes("whoami")), "query GET fallback should carry per-call headers");
+        for (const s of gets) assert.ok(hasCanary(s), "GET fallback to the configured endpoint should carry env.HEADERS");
     });
 });

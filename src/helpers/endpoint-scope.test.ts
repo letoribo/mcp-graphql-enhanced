@@ -1,10 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
+import net from "node:net";
 import {
+    fetchFollowingTrustedRedirects,
     isConfiguredEndpoint,
     normalizeEndpointUrl,
     parseEndpointList,
     selectOutboundHeaders,
+    withoutBodyHeaders,
 } from "./endpoint-scope.js";
 
 const CONFIGURED = ["https://api.example.com/graphql"];
@@ -89,4 +93,53 @@ test("selectOutboundHeaders", () => {
         selectOutboundHeaders("https://api.example.com/graphql", CONFIGURED, OP, { Authorization: "caller-token" }),
         { Authorization: "caller-token" }
     );
+});
+
+test("withoutBodyHeaders", () => {
+    assert.deepEqual(
+        withoutBodyHeaders({ "Content-Type": "application/json", "content-length": "3", Authorization: "x", accept: "a" }),
+        { Authorization: "x", accept: "a" }
+    );
+});
+
+test("fetchFollowingTrustedRedirects follows only trusted Locations", async () => {
+    type Hit = { method: string; path: string; auth?: string };
+    const hits: Hit[] = [];
+    const server = http.createServer((req, res) => {
+        req.resume();
+        req.on("end", () => {
+            hits.push({ method: req.method!, path: req.url!, auth: req.headers.authorization });
+            const port = (server.address() as net.AddressInfo).port;
+            const redirects: Record<string, [number, string]> = {
+                "/to-trusted": [307, `http://127.0.0.1:${port}/trusted-2`],
+                "/to-other": [302, `http://127.0.0.1:${port}/other`],
+                "/post-302": [302, "/trusted-2"],
+            };
+            const r = redirects[req.url!];
+            if (r) res.writeHead(r[0], { Location: r[1] });
+            else res.writeHead(200);
+            res.end();
+        });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const base = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    const trusted = [`${base}/to-trusted`, `${base}/to-other`, `${base}/post-302`, `${base}/trusted-2`];
+    const init = { method: "POST", headers: { Authorization: OP.Authorization, "Content-Type": "application/json" }, body: "{}" };
+    try {
+        let res = await fetchFollowingTrustedRedirects(`${base}/to-trusted`, init, trusted);
+        assert.equal(res.status, 200);
+        assert.deepEqual(hits.at(-1), { method: "POST", path: "/trusted-2", auth: OP.Authorization });
+
+        hits.length = 0;
+        res = await fetchFollowingTrustedRedirects(`${base}/to-other`, init, trusted);
+        assert.equal(res.status, 302, "untrusted redirect is returned, not followed");
+        assert.deepEqual(hits.map((h) => h.path), ["/to-other"]);
+
+        hits.length = 0;
+        res = await fetchFollowingTrustedRedirects(`${base}/post-302`, init, trusted);
+        assert.equal(res.status, 200);
+        assert.deepEqual(hits.at(-1), { method: "GET", path: "/trusted-2", auth: OP.Authorization });
+    } finally {
+        await new Promise((r) => server.close(r));
+    }
 });

@@ -22,7 +22,7 @@ import { registerPrompt } from "./helpers/prompt-registry.js";
 import { isQueryRelevantToNode, pruneASTForSchema } from "./helpers/routing.js";
 import { isDocker } from "./helpers/container.js";
 import { evaluateRequest, isLoopbackBind, resolveBindHost } from "./helpers/http-guard.js";
-import { parseEndpointList, selectOutboundHeaders } from "./helpers/endpoint-scope.js";
+import { fetchFollowingTrustedRedirects, isConfiguredEndpoint, parseEndpointList, selectOutboundHeaders, withoutBodyHeaders } from "./helpers/endpoint-scope.js";
 import path from "path";
 
 /**
@@ -113,6 +113,20 @@ function buildRequestHeaders(
         "Content-Type": "application/json",
         ...selectOutboundHeaders(targetUrl, trustedUrls, rawHeaders, runtimeHeaders),
     };
+}
+
+/**
+ * fetch() paired with buildRequestHeaders: when targetUrl is trusted (so the request
+ * carries env.HEADERS), redirects are followed only to other trusted URLs.
+ */
+function scopedFetch(
+    targetUrl: string,
+    init: RequestInit,
+    trustedUrls: readonly string[] = CONFIGURED_ENDPOINTS
+): Promise<Response> {
+    return isConfiguredEndpoint(targetUrl, trustedUrls)
+        ? fetchFollowingTrustedRedirects(targetUrl, init, trustedUrls)
+        : fetch(targetUrl, init);
 }
 
 /**
@@ -252,10 +266,10 @@ async function loadSchemas(
             if (isRemoteSdl) {
                 // Operator-configured SDL URL (never a caller override): trusted for env.HEADERS
                 const schemaUrl = env.SCHEMA.trim();
-                const response = await fetch(schemaUrl, {
+                const response = await scopedFetch(schemaUrl, {
                     headers: buildRequestHeaders(schemaUrl, customHeaders, [schemaUrl]),
                     signal: AbortSignal.timeout(15000)
-                });
+                }, [schemaUrl]);
                 if (!response.ok) throw new Error(`Remote_SDL_Fetch_Failed: ${response.status} ${response.statusText}`);
                 sdl = await response.text();
             } else {
@@ -302,7 +316,7 @@ async function loadSchemas(
                                 }
                             }
 
-                            let res = await fetch(url, {
+                            let res = await scopedFetch(url, {
                                 method: "POST",
                                 headers: cleanHeaders,
                                 body: JSON.stringify({ query: queryStr })
@@ -311,9 +325,10 @@ async function loadSchemas(
                             if (!res.ok) {
                                 console.warn(`[SYNC-WARN] POST returned HTTP ${res.status} from ${url}. Retrying with GET fallback...`);
                                 const getUrl = `${url}?query=${encodeURIComponent(queryStr.replace(/\s+/g, ' ').trim())}`;
-                                res = await fetch(getUrl, {
+                                // Same header policy as the POST (headers were selected for url)
+                                res = await scopedFetch(getUrl, {
                                     method: "GET",
-                                    headers: { "Accept": "application/json" }
+                                    headers: withoutBodyHeaders(cleanHeaders)
                                 });
                             }
 
@@ -459,8 +474,9 @@ export const queryGraphqlHandler = async ({
         const hasEndpointOverride = Boolean(endpoint && endpoint.trim().length > 0);
         const nextEndpoint = hasEndpointOverride ? endpoint!.trim() : undefined;
 
-        // Per-call override: introspect into a request-scoped snapshot; module cache stays untouched
-        const scoped = (nextEndpoint && nextEndpoint !== activeEndpoint)
+        // Explicit endpoint (even one equal to activeEndpoint): introspect into a request-scoped
+        // snapshot; module cache stays untouched
+        const scoped = nextEndpoint
             ? await loadSchemas(2, runtimeHeaders, nextEndpoint)
             : null;
         const callSchemas = scoped ? scoped.schemas : cachedSchemas;
@@ -578,7 +594,7 @@ export const queryGraphqlHandler = async ({
 
                 for (let attempt = 0; attempt < 2; attempt++) {
                     try {
-                        response = await fetch(url, {
+                        response = await scopedFetch(url, {
                             method: "POST",
                             headers: cleanHeaders,
                             body: JSON.stringify({ 
@@ -597,12 +613,10 @@ export const queryGraphqlHandler = async ({
                                 getUrl += `&variables=${encodeURIComponent(JSON.stringify(fetchVariables))}`;
                             }
 
-                            response = await fetch(getUrl, {
+                            // Same header policy as the POST (headers were selected for url)
+                            response = await scopedFetch(getUrl, {
                                 method: "GET",
-                                headers: { 
-                                    "accept": "application/json",
-                                    "apollo-require-preflight": "true"
-                                },
+                                headers: withoutBodyHeaders(cleanHeaders),
                                 signal: AbortSignal.timeout(15000)
                             });
                         }
@@ -762,7 +776,8 @@ export const introspectHandler = async (args: {
     const hasEndpointOverride = Boolean(args.endpoint && args.endpoint.trim().length > 0);
     const nextEndpoint = hasEndpointOverride ? args.endpoint!.trim() : undefined;
 
-    const isScopedOverride = Boolean(nextEndpoint && nextEndpoint !== activeEndpoint);
+    // Any explicit endpoint, even one equal to activeEndpoint, is request-scoped
+    const isScopedOverride = hasEndpointOverride;
 
     let { typeNames, typeDepth } = args;
     let cleanTypeNames: string[] | undefined;
@@ -822,7 +837,7 @@ export const introspectHandler = async (args: {
     }
 
     const depth = typeDepth ?? 2;
-    const forceRefresh = hasEndpointOverride || Object.keys(runtimeHeaders).length > 0;
+    const forceRefresh = Object.keys(runtimeHeaders).length > 0;
     let callSchemas: Array<GraphQLSchema & { _originUrl?: string }>;
     let manifest: any[];
     if (isScopedOverride) {
