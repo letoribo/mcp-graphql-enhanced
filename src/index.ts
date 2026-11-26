@@ -21,6 +21,7 @@ import { registerTool } from "./helpers/tool-registry.js";
 import { registerPrompt } from "./helpers/prompt-registry.js";
 import { isQueryRelevantToNode, pruneASTForSchema } from "./helpers/routing.js";
 import { isDocker } from "./helpers/container.js";
+import { evaluateRequest, isLoopbackBind, resolveBindHost } from "./helpers/http-guard.js";
 import path from "path";
 
 /**
@@ -952,10 +953,26 @@ async function executeGraphQL(query: string, variables: any, clientHeaders?: Rec
 }
 
 // --- HTTP ADAPTER FOR GRAPHIQL & NATIVE GRAPHQL ---
-async function handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+async function handleHttpRequest(req: IncomingMessage, res: ServerResponse, bindHost: string) {
+    // 🛡️ Origin/Host gate runs before any body read or routing
+    const decision = evaluateRequest({
+        method: req.method,
+        origin: req.headers.origin,
+        hostHeader: req.headers.host,
+        bindHost,
+    });
+
+    res.setHeader('Vary', 'Origin');
+    if (decision.allowOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', decision.allowOrigin);
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+    }
+
+    if (decision.reject) {
+        res.writeHead(decision.reject.status, { 'Content-Type': 'application/json', 'Connection': 'close' });
+        return res.end(JSON.stringify({ error: decision.reject.reason }));
+    }
 
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
@@ -1134,8 +1151,9 @@ async function main() {
     }
     
     if (shouldStartHttp) {
-        const httpSrv = http.createServer(handleHttpRequest);
-        
+        const bindHost = resolveBindHost({ portEnv: process.env.PORT, inDocker: isDocker() });
+        const httpSrv = http.createServer((req, res) => handleHttpRequest(req, res, bindHost));
+
         const start = (port: number) => {
             httpSrv.removeAllListeners('error');
             httpSrv.removeAllListeners('listening');
@@ -1157,10 +1175,13 @@ async function main() {
                 }
             });
 
-            httpSrv.listen(port, '0.0.0.0', () => {
+            httpSrv.listen(port, bindHost, () => {
                 const address = httpSrv.address();
                 const actualPort = typeof address === 'object' && address ? address.port : port;
-                console.error(`[SYSTEM] Federated Bridge active on port ${actualPort}`);
+                console.error(`[SYSTEM] Federated Bridge active on ${bindHost}:${actualPort}`);
+                if (!isLoopbackBind(bindHost)) {
+                    console.error(`[WARN] HTTP bound publicly on ${bindHost} with no inbound auth. Put access control in front (platform auth / private network).`);
+                }
                 console.error(`📡 MCP Endpoint: http://localhost:${actualPort}/mcp`);
                 if (process.env.ENABLE_HTTP === "true") {
                     console.error(`🎨 GraphiQL: http://localhost:${actualPort}/graphiql`);

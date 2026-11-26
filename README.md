@@ -108,7 +108,7 @@ For GraphQL server implementations that return query execution plans (like `@neo
 Unlike standard MCP servers, this one provides a visual interface for humans. When running with `ENABLE_HTTP=true`, you can open a full-featured **GraphiQL IDE** in your browser.
 
 * **Endpoint:** `http://localhost:6274/` (or /graphql, /graphiql)
-* **Header Sync:** Any headers set in your environment (like GitHub tokens) are automatically injected into the GraphiQL "Headers" tab for immediate testing.
+* **Headers:** Environment `HEADERS` (like GitHub tokens) are applied server-side and are never embedded in the GraphiQL page.
 
 ## 💻 HTTP / Dual Transport
 
@@ -121,6 +121,12 @@ This allows external systems, web applications, and direct `curl` commands to ac
 | `/graphiql` | `GET` | Human Interface: The visual GraphQL IDE. |
 | `/mcp` | `POST` | The main JSON-RPC 2.0 endpoint for tool execution. |
 | `/health` | `GET` | Simple health check, returns `{ status: 'ok' }`. |
+
+### 🛡️ HTTP Security
+* **Loopback by default:** the HTTP server binds to `127.0.0.1`. It binds to `0.0.0.0` only when the platform sets `PORT` (Render, Railway) or when running inside Docker. Requests whose `Host` header is not `localhost` / `127.0.0.1` / `[::1]` are refused on a loopback bind (DNS-rebinding protection).
+* **CORS allowlist:** browser requests are accepted only from `http(s)://localhost`, `http(s)://127.0.0.1`, `http(s)://[::1]` (any port), `app://` (desktop apps such as `mcp-graphiql`), or the deployment's own origin (same host as the `Host` header). Requests with no `Origin` header (CLI, `curl`, `mcp-remote`, server-side Node `fetch`) are unaffected. A POST or preflight from any other origin gets `403`.
+* **`null` and `file://` origins are refused:** any website can send `Origin: null` from a sandboxed iframe, including to a server bound to `127.0.0.1` on your own machine, so allowing it would let any page drive your tools.
+* **No inbound auth on public deployments:** when bound publicly, anyone who can reach the port can call the tools with your `HEADERS`. Put access control in front of it (platform auth, private network).
 
 ### Resolving Port Conflicts (EADDRINUSE) and Automatic Port Selection
 
