@@ -22,6 +22,7 @@ import { registerPrompt } from "./helpers/prompt-registry.js";
 import { isQueryRelevantToNode, pruneASTForSchema } from "./helpers/routing.js";
 import { isDocker } from "./helpers/container.js";
 import { evaluateRequest, isLoopbackBind, resolveBindHost } from "./helpers/http-guard.js";
+import { parseEndpointList, selectOutboundHeaders } from "./helpers/endpoint-scope.js";
 import path from "path";
 
 /**
@@ -90,10 +91,18 @@ const env = EnvSchema.parse(process.env);
 const isRemoteSdl = Boolean(env.SCHEMA?.trim().startsWith("http"));
 const sdlMode = isRemoteSdl ? "remote-sdl" : "local-sdl";
 
+// Operator-configured endpoints. env.HEADERS are only ever sent to these.
+const CONFIGURED_ENDPOINTS: readonly string[] = parseEndpointList(env.ENDPOINT);
+
 /**
- * Build dynamic auth headers for nodes that require credentials
+ * Build outbound headers for targetUrl. env.HEADERS are attached only when
+ * targetUrl matches a trusted (operator-configured) URL; per-call headers always are.
  */
-function buildRequestHeaders(runtimeHeaders?: Record<string, string>): Record<string, string> {
+function buildRequestHeaders(
+    targetUrl: string,
+    runtimeHeaders?: Record<string, string>,
+    trustedUrls: readonly string[] = CONFIGURED_ENDPOINTS
+): Record<string, string> {
     const rawHeaders = (typeof env.HEADERS === 'object' && env.HEADERS !== null)
         ? (env.HEADERS as Record<string, string>)
         : {};
@@ -102,8 +111,7 @@ function buildRequestHeaders(runtimeHeaders?: Record<string, string>): Record<st
         "User-Agent": `MCP-GraphQL-Enhanced/${getVersion()}`,
         "Accept": "application/json",
         "Content-Type": "application/json",
-        ...rawHeaders,
-        ...(runtimeHeaders ?? {}),
+        ...selectOutboundHeaders(targetUrl, trustedUrls, rawHeaders, runtimeHeaders),
     };
 }
 
@@ -122,7 +130,8 @@ const server = new McpServer({
 });
 
 // --- GLOBAL STATE MANAGEMENT ---
-let activeEndpoint: string = env.ENDPOINT || "";
+// Configured default endpoint. Never reassigned: per-call overrides are request-scoped.
+const activeEndpoint: string = env.ENDPOINT || "";
 let cachedSDL: string | null = null;
 let cachedSchemaObject: any = null;
 let cachedSchemas: Array<GraphQLSchema & { _originUrl?: string }> = [];
@@ -165,8 +174,14 @@ async function getSchema(
     }
 }
 
+type SchemaSnapshot = {
+    schemas: Array<GraphQLSchema & { _originUrl?: string }>;
+    manifest: any[];
+};
+
 /**
- * Federated Update: Orchestrates introspection across all endpoints
+ * Federated Update: Orchestrates introspection across all endpoints and commits
+ * the result to the module cache. Only for the configured default endpoint.
  */
 async function performUpdate(
     typeDepth: number = 2,
@@ -175,22 +190,70 @@ async function performUpdate(
 ): Promise<string> {
     isUpdating = true;
     const startTime = Date.now();
+
+    try {
+        const { printSchema, isObjectType } = require("graphql");
+        const snapshot = await loadSchemas(typeDepth, customHeaders, targetEndpoint);
+
+        cachedSchemas = snapshot.schemas;
+        (global as any).nodeManifest = snapshot.manifest;
+
+        cachedSchemaObject = cachedSchemas[0];
+        const currentSDL = printSchema(cachedSchemaObject);
+
+        const typeMap = cachedSchemaObject.getTypeMap();
+        const businessTypes = Object.keys(typeMap).filter(typeName => {
+            const type = typeMap[typeName];
+            return !typeName.startsWith('__') &&
+                   !['Query', 'Mutation', 'Subscription'].includes(typeName) &&
+                   isObjectType(type);
+        });
+
+        if (currentSDL !== cachedSDL) {
+            cachedSDL = currentSDL;
+            const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+            const sourceInfo = (env.SCHEMA && !targetEndpoint) ? 'SDL File' : `${cachedSchemas.length} Active Nodes`;
+
+            return [
+                `✨ SCHEMA EVOLVED (${duration}s)`,
+                `📊 Source: ${sourceInfo}`,
+                `🧬 Types: ${businessTypes.length}`,
+                `---`,
+                `The bridge has updated the graph model.`
+            ].join('\n');
+        }
+
+        return `✅ Status: Schema stable (${businessTypes.length} types).`;
+    } finally {
+        isUpdating = false;
+    }
+}
+
+/**
+ * Introspect targetEndpoint (or the configured default) without touching module state.
+ * Safe for request-scoped per-call endpoint overrides.
+ */
+async function loadSchemas(
+    typeDepth: number = 2,
+    customHeaders?: Record<string, string>,
+    targetEndpoint?: string
+): Promise<SchemaSnapshot> {
     const effectiveEndpoint = (targetEndpoint && targetEndpoint.trim().length > 0)
         ? targetEndpoint.trim()
         : activeEndpoint;
 
     try {
-        const { buildClientSchema, getIntrospectionQuery, printSchema, buildASTSchema, parse: gqlParse, isObjectType } = require("graphql");
+        const { buildClientSchema, getIntrospectionQuery, buildASTSchema, parse: gqlParse } = require("graphql");
         let tempSchemas: any[] = [];
         const manifest: any[] = [];
-
-        const activeHeaders = buildRequestHeaders(customHeaders);
 
         if (env.SCHEMA && !targetEndpoint) {
             let sdl: string;
             if (isRemoteSdl) {
-                const response = await fetch(env.SCHEMA.trim(), {
-                    headers: activeHeaders,
+                // Operator-configured SDL URL (never a caller override): trusted for env.HEADERS
+                const schemaUrl = env.SCHEMA.trim();
+                const response = await fetch(schemaUrl, {
+                    headers: buildRequestHeaders(schemaUrl, customHeaders, [schemaUrl]),
                     signal: AbortSignal.timeout(15000)
                 });
                 if (!response.ok) throw new Error(`Remote_SDL_Fetch_Failed: ${response.status} ${response.statusText}`);
@@ -230,6 +293,7 @@ async function performUpdate(
                                 "Accept": "application/json"
                             };
 
+                            const activeHeaders = buildRequestHeaders(url, customHeaders);
                             if (activeHeaders) {
                                 for (const [k, v] of Object.entries(activeHeaders)) {
                                     if (!['host', 'content-length', 'connection'].includes(k.toLowerCase())) {
@@ -340,44 +404,13 @@ async function performUpdate(
             throw new Error("No valid schemas could be retrieved.");
         }
 
-        cachedSchemas = tempSchemas;
-        (global as any).nodeManifest = manifest;
-
-        cachedSchemaObject = cachedSchemas[0];
-        const currentSDL = printSchema(cachedSchemaObject);
-
-        const typeMap = cachedSchemaObject.getTypeMap();
-        const businessTypes = Object.keys(typeMap).filter(typeName => {
-            const type = typeMap[typeName];
-            return !typeName.startsWith('__') &&
-                   !['Query', 'Mutation', 'Subscription'].includes(typeName) &&
-                   isObjectType(type);
-        });
-
-        if (currentSDL !== cachedSDL) {
-            cachedSDL = currentSDL;
-            const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-            const sourceInfo = (env.SCHEMA && !targetEndpoint) ? 'SDL File' : `${cachedSchemas.length} Active Nodes`;
-
-            return [
-                `✨ SCHEMA EVOLVED (${duration}s)`,
-                `📊 Source: ${sourceInfo}`,
-                `🧬 Types: ${businessTypes.length}`,
-                `---`,
-                `The bridge has updated the graph model.`
-            ].join('\n');
-        }
-
-        return `✅ Status: Schema stable (${businessTypes.length} types).`;
-
+        return { schemas: tempSchemas, manifest };
     } catch (error: any) {
         console.error(`[SYNC-WARN] Fetch failed:`, error?.message || error);
         if (error?.cause) {
             console.error(`[SYNC-WARN Cause]:`, error.cause);
         }
         throw error;
-    } finally {
-        isUpdating = false;
     }
 }
 
@@ -426,15 +459,14 @@ export const queryGraphqlHandler = async ({
         const hasEndpointOverride = Boolean(endpoint && endpoint.trim().length > 0);
         const nextEndpoint = hasEndpointOverride ? endpoint!.trim() : undefined;
 
-        if (nextEndpoint && nextEndpoint !== activeEndpoint) {
-            activeEndpoint = nextEndpoint;
-            cachedSchemas = [];
-            cachedSchemaObject = null;
-            cachedSDL = null;
-            await getSchema(true, undefined, 2, runtimeHeaders, activeEndpoint);
-        }
+        // Per-call override: introspect into a request-scoped snapshot; module cache stays untouched
+        const scoped = (nextEndpoint && nextEndpoint !== activeEndpoint)
+            ? await loadSchemas(2, runtimeHeaders, nextEndpoint)
+            : null;
+        const callSchemas = scoped ? scoped.schemas : cachedSchemas;
+        const callDefaultSchema = scoped ? scoped.schemas[0] : cachedSchemaObject;
 
-        const manifest = (global as any).nodeManifest || [];
+        const manifest = scoped ? scoped.manifest : ((global as any).nodeManifest || []);
         const activeEndpointString = nextEndpoint || activeEndpoint;
         
         // 🛡️ Executing on built-in safe-defaults schema when no endpoint is provided
@@ -516,7 +548,7 @@ export const queryGraphqlHandler = async ({
 
                 // 🛡️ Find the schema specifically for this endpoint and prune AST to match its capabilities
                 // Debug: check which schema was found for which URL
-                const nodeSchema = (cachedSchemas as any[]).find(s => s._originUrl === url) || cachedSchemaObject;
+                const nodeSchema = (callSchemas as any[]).find(s => s._originUrl === url) || callDefaultSchema;
                 // console.log(`[Router] URL: ${url}, Schema found:`, !!nodeSchema, nodeSchema === cachedSchemaObject ? "(FALLBACK TO DEFAULT)" : "(NODE-SPECIFIC)");
 
                 const prunedAST = pruneASTForSchema(parsedQuery, nodeSchema);
@@ -531,8 +563,8 @@ export const queryGraphqlHandler = async ({
                     "x-apollo-operation-name": "MCPQuery"
                 };
 
-                // Merge headers from environment and runtime without overwriting CSRF protection
-                const mergedCustomHeaders = buildRequestHeaders(runtimeHeaders);
+                // Merge headers from environment (configured endpoints only) and runtime without overwriting CSRF protection
+                const mergedCustomHeaders = buildRequestHeaders(url, runtimeHeaders);
                 for (const [k, v] of Object.entries(mergedCustomHeaders)) {
                     const lowerKey = k.toLowerCase();
                     if (!['host', 'content-length', 'connection'].includes(lowerKey)) {
@@ -730,13 +762,8 @@ export const introspectHandler = async (args: {
     const hasEndpointOverride = Boolean(args.endpoint && args.endpoint.trim().length > 0);
     const nextEndpoint = hasEndpointOverride ? args.endpoint!.trim() : undefined;
 
-    if (nextEndpoint && nextEndpoint !== activeEndpoint) {
-        activeEndpoint = nextEndpoint;
-        cachedSchemas = [];
-        cachedSchemaObject = null;
-        cachedSDL = null;
-    }
-    
+    const isScopedOverride = Boolean(nextEndpoint && nextEndpoint !== activeEndpoint);
+
     let { typeNames, typeDepth } = args;
     let cleanTypeNames: string[] | undefined;
 
@@ -796,14 +823,22 @@ export const introspectHandler = async (args: {
 
     const depth = typeDepth ?? 2;
     const forceRefresh = hasEndpointOverride || Object.keys(runtimeHeaders).length > 0;
-    await getSchema(forceRefresh, cleanTypeNames, depth, runtimeHeaders, nextEndpoint || activeEndpoint || undefined);
+    let callSchemas: Array<GraphQLSchema & { _originUrl?: string }>;
+    let manifest: any[];
+    if (isScopedOverride) {
+        // Request-scoped: never written to the module cache
+        ({ schemas: callSchemas, manifest } = await loadSchemas(depth, runtimeHeaders, nextEndpoint));
+    } else {
+        await getSchema(forceRefresh, cleanTypeNames, depth, runtimeHeaders, activeEndpoint || undefined);
+        callSchemas = cachedSchemas;
+        manifest = (global as any).nodeManifest || [];
+    }
 
-    if (cachedSchemas.length === 0) {
+    if (callSchemas.length === 0) {
         return { content: [{ type: "text" as const, text: "❌ System is not initialized." }] };
     }
 
     if (!typeNames || typeNames.length === 0) {
-        const manifest = (global as any).nodeManifest || [];
         const body = manifest.map((m: any) => {
             const capabilities = (Array.isArray(m.availableMutations) && m.availableMutations.length > 0) 
                 ? m.availableMutations.join(', ') 
@@ -827,7 +862,7 @@ export const introspectHandler = async (args: {
     const resolution: any = {};
     for (const name of (cleanTypeNames || [])) {
         const variants: any[] = [];
-        for (const schema of cachedSchemas) {
+        for (const schema of callSchemas) {
             const found = introspectSpecificTypes(schema, [name], depth); 
             if (found && found[name]) {
                 variants.push({ origin: schema._originUrl, data: found[name] });
