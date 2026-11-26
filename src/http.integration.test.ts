@@ -51,7 +51,8 @@ describe("HTTP transport security (real server)", { skip: isDocker() ? "running 
     before(async () => {
         port = await freePort();
         const env: NodeJS.ProcessEnv = { ...process.env, ENABLE_HTTP: "true", MCP_PORT: String(port), HEADERS: JSON.stringify({ Authorization: CANARY }) };
-        for (const k of ["PORT", "ENDPOINT", "SCHEMA", "MCP_INSPECTOR", "INSPECTOR_PORT", "INSPECTOR_URL"]) delete env[k];
+        // WSL/Windows often exports NAME=<hostname>, which would override EnvSchema.NAME.
+        for (const k of ["PORT", "ENDPOINT", "SCHEMA", "MCP_INSPECTOR", "INSPECTOR_PORT", "INSPECTOR_URL", "NAME"]) delete env[k];
 
         // Load tsx in-process (no wrapper child) so killing `child` kills the server itself.
         child = spawn(process.execPath, ["--import", "tsx", path.join(ROOT, "src", "index.ts")], { cwd: ROOT, env, stdio: ["pipe", "pipe", "pipe"] });
