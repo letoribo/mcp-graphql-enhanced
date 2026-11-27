@@ -146,6 +146,8 @@ const server = new McpServer({
 // --- GLOBAL STATE MANAGEMENT ---
 // Configured default endpoint. Never reassigned: per-call overrides are request-scoped.
 const activeEndpoint: string = env.ENDPOINT || "";
+let playgroundEndpoint: string = activeEndpoint;
+let playgroundEndpointVersion: number = 0;
 let cachedSDL: string | null = null;
 let cachedSchemaObject: any = null;
 let cachedSchemas: Array<GraphQLSchema & { _originUrl?: string }> = [];
@@ -474,6 +476,11 @@ export const queryGraphqlHandler = async ({
         const hasEndpointOverride = Boolean(endpoint && endpoint.trim().length > 0);
         const nextEndpoint = hasEndpointOverride ? endpoint!.trim() : undefined;
 
+        if (nextEndpoint && nextEndpoint !== playgroundEndpoint) {
+            playgroundEndpoint = nextEndpoint;
+            playgroundEndpointVersion++;
+        }
+
         // Explicit endpoint (even one equal to activeEndpoint): introspect into a request-scoped
         // snapshot; module cache stays untouched
         const scoped = nextEndpoint
@@ -776,6 +783,11 @@ export const introspectHandler = async (args: {
     const hasEndpointOverride = Boolean(args.endpoint && args.endpoint.trim().length > 0);
     const nextEndpoint = hasEndpointOverride ? args.endpoint!.trim() : undefined;
 
+    if (nextEndpoint && nextEndpoint !== playgroundEndpoint) {
+        playgroundEndpoint = nextEndpoint;
+        playgroundEndpointVersion++;
+    }
+
     // Any explicit endpoint, even one equal to activeEndpoint, is request-scoped
     const isScopedOverride = hasEndpointOverride;
 
@@ -967,39 +979,54 @@ const readBody = (req: IncomingMessage): Promise<string> =>
     });
 
 async function executeGraphQL(query: string, variables: any, clientHeaders?: Record<string, string>) {
-  if (query.includes("__schema")) {
-    if ((!cachedSchemaObject || cachedSchemaObject._originUrl === "safe-defaults") && activeEndpoint) {
-      await getSchema(true, undefined, 5, clientHeaders, activeEndpoint);
+    const targetPlaygroundUrl = playgroundEndpoint || activeEndpoint;
+
+    if (query.includes("__schema")) {
+        if (targetPlaygroundUrl) {
+            const snapshot = await loadSchemas(5, clientHeaders, targetPlaygroundUrl);
+            if (snapshot.schemas.length > 0) {
+                return await graphql({
+                    schema: snapshot.schemas[0],
+                    source: query,
+                    variableValues: variables,
+                });
+            }
+        }
+
+        if (cachedSchemaObject) {
+            return await graphql({
+                schema: cachedSchemaObject,
+                source: query,
+                variableValues: variables,
+            });
+        }
     }
-    if (cachedSchemaObject) {
-      return await graphql({
-        schema: cachedSchemaObject,
-        source: query,
-        variableValues: variables,
-      });
+
+    const handler = toolHandlers.get("query-graphql");
+    if (!handler) {
+        throw new Error("GraphQL handler not found");
     }
-  }
 
-  const handler = toolHandlers.get("query-graphql");
-  if (!handler) {
-    throw new Error("GraphQL handler not found");
-  }
+    const mcpResult = await handler({
+        query,
+        variables: variables ? (typeof variables === 'string' ? variables : JSON.stringify(variables)) : "{}",
+        ...(targetPlaygroundUrl ? { endpoint: targetPlaygroundUrl } : {}),
+        ...(clientHeaders && Object.keys(clientHeaders).length > 0 ? { headers: JSON.stringify(clientHeaders) } : {}),
+    });
 
-  const mcpResult = await handler({
-    query,
-    variables,
-    ...(clientHeaders && Object.keys(clientHeaders).length > 0 ? { headers: JSON.stringify(clientHeaders) } : {}),
-  });
+        const rawText = Array.isArray(mcpResult.content)
+        ? mcpResult.content[0]?.text
+        : mcpResult.content?.text;
 
-  if (mcpResult.isError) {
-    return { errors: [{ message: mcpResult.content[0].text }] };
-  }
+    if (mcpResult.isError) {
+        return { errors: [{ message: rawText || "GraphQL execution error" }] };
+    }
 
-  const parsed = JSON.parse(mcpResult.content[0].text);
-  return {
-    ...(parsed.data ? { data: parsed.data } : {}),
-    ...(parsed.errors ? { errors: parsed.errors } : {}),
-  };
+    const parsed = JSON.parse(rawText || "{}");
+    return {
+        ...(parsed.data ? { data: parsed.data } : {}),
+        ...(parsed.errors ? { errors: parsed.errors } : {}),
+    };
 }
 
 // --- HTTP ADAPTER FOR GRAPHIQL & NATIVE GRAPHQL ---
@@ -1049,6 +1076,13 @@ async function handleHttpRequest(req: IncomingMessage, res: ServerResponse, bind
             case '/health':
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 return res.end(JSON.stringify({ status: 'ok', version: getVersion() }));
+
+            case '/endpoint-status':
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({
+                    endpoint: playgroundEndpoint,
+                    version: playgroundEndpointVersion
+                }));
 
             default:
                 res.writeHead(404, { 'Content-Type': 'application/json' });

@@ -63,6 +63,21 @@ export function renderGraphiQL(endpoint: string, headers: object = {}): string {
                         defaultEditorToolsVisibility: true
                     })
                 );
+
+                // Auto-reload when the active endpoint changes via MCP tool calls
+                let lastEndpointVersion = null;
+                setInterval(async function() {
+                    try {
+                        const res = await fetch('/endpoint-status');
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        if (lastEndpointVersion === null) {
+                            lastEndpointVersion = data.version;
+                        } else if (data.version !== lastEndpointVersion) {
+                            window.location.reload();
+                        }
+                    } catch (_) {}
+                }, 1500);
             } else {
                 document.getElementById('graphiql').innerHTML = 
                     '<div class="loading-screen" style="color: #ff4d4d">Error: GraphiQL SDK failed to load.</div>';
