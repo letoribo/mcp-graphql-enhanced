@@ -75,7 +75,7 @@ const EnvSchema = z.object({
             return parseInt(port as string);
         },
         z.number().int().min(1024).max(65535)
-    ).default(6274),
+    ),
     ENABLE_HTTP: z
         .enum(["true", "false", "auto"])
         .default("auto")

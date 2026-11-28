@@ -6,12 +6,12 @@
     "url": "https://github.com/letoribo/mcp-graphql-enhanced",
     "source": "github"
   },
-  "version": "5.0.1",
+  "version": "5.0.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@letoribo/mcp-graphql-enhanced",
-      "version": "5.0.1",
+      "version": "5.0.2",
       "transport": {
         "type": "stdio"
       },
