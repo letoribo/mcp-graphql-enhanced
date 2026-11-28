@@ -54,8 +54,8 @@ const EnvSchema = z.object({
     ).default(""),
     ALLOW_MUTATIONS: z
         .enum(["true", "false"])
-        .transform((value: string) => value === "true")
-        .default("false"),
+        .default("false")
+        .transform((value: string) => value === "true"),
     HEADERS: z
         .string()
         .default("{}")
@@ -78,14 +78,15 @@ const EnvSchema = z.object({
     ).default(6274),
     ENABLE_HTTP: z
         .enum(["true", "false", "auto"])
+        .default("auto")
         .transform((value: string) => {
             if (value === "auto") {
                 return !!(process.env.MCP_INSPECTOR || process.env.INSPECTOR_PORT || process.env.INSPECTOR_URL);
             }
             return value === "true";
-        })
-        .default("auto"),
+        }),
 });
+
 
 const env = EnvSchema.parse(process.env);
 const isRemoteSdl = Boolean(env.SCHEMA?.trim().startsWith("http"));
